@@ -1,0 +1,188 @@
+version: "3.8"
+
+services:
+  # ==================== 反向代理 ====================
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: kb-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 256m
+
+  # ==================== 业务数据库 ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: kb-postgres
+    environment:
+      POSTGRES_DB: knowledge
+      POSTGRES_USER: ${PG_USER:-kb_user}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-kb_pass}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 3g
+    command: >
+      postgres
+        -c shared_buffers=1GB
+        -c effective_cache_size=3GB
+        -c max_connections=50
+
+  # ==================== 缓存 ====================
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 1g
+
+  # ==================== 文件存储 ====================
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: kb-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-kb_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-kb_pass}
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./data/minio:/data
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 1g
+
+  # ==================== 检索引擎 ====================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: kb-es
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms4g -Xmx6g"
+      - xpack.security.enabled=false
+    volumes:
+      - ./data/es:/usr/share/elasticsearch/data
+      - ./config/es:/usr/share/elasticsearch/config/analysis-ik:ro
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 8g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ==================== 知识图谱 ====================
+  neo4j:
+    image: neo4j:5-community
+    container_name: kb-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-neo4j_pass}
+      NEO4J_server_memory_heap_initial__size: 2g
+      NEO4J_server_memory_heap_max__size: 4g
+      NEO4J_server_memory_pagecache_size: 1g
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 6g
+
+  # ==================== LLM 推理 ====================
+  ollama:
+    image: ollama/ollama:0.4.7
+    container_name: kb-ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=5m
+    volumes:
+      - ./ollama/models:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 24g
+
+  # ==================== AI 服务 ====================
+  ai-service:
+    build:
+      context: ../ai-service
+      dockerfile: Dockerfile
+    container_name: kb-ai
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: qwen3:14b-q4_K_M
+      EMBEDDING_MODEL: BAAI/bge-large-zh-v1.5
+    depends_on:
+      - ollama
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 4g
+
+  # ==================== Java 后端 ====================
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: kb-backend
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_HOST: postgres
+      DB_USER: ${PG_USER:-kb_user}
+      DB_PASSWORD: ${PG_PASSWORD:-kb_pass}
+      REDIS_HOST: redis
+      ES_HOST: elasticsearch
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_pass}
+      AI_SERVICE_URL: http://ai-service:8000
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_USER: ${MINIO_USER:-kb_admin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-kb_pass}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-string-at-least-32-chars}
+    depends_on:
+      - postgres
+      - redis
+      - elasticsearch
+      - neo4j
+      - minio
+      - ai-service
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 8g
+
+  # ==================== 前端 ====================
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: kb-frontend
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - kb-net
+    mem_limit: 512m
+
+networks:
+  kb-net:
+    driver: bridge
