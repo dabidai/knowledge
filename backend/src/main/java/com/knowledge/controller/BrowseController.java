@@ -33,6 +33,7 @@ public class BrowseController {
      * 结构: 部门 → 事项分类 → 事项 → 文件列表
      */
     @GetMapping("/tree")
+    @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
     public ApiResponse<List<TreeNode>> tree(@AuthenticationPrincipal User user) {
         String deptName = user.getDepartment().getName();
         boolean isAdmin = "admin".equals(user.getRole());

@@ -9,6 +9,7 @@ import com.knowledge.service.ElasticsearchService.DocIndex;
 import com.knowledge.service.MinioService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,6 +28,7 @@ public class SearchController {
 
     /** 综合检索 —— 返回 RAG 答案 + 来源文档 + 下载链接 */
     @PostMapping
+    @Cacheable(value = "search", key = "#body['query'] + '_' + #body['topK'] + '_' + #user.department.name")
     public ApiResponse<SearchResult> search(
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {

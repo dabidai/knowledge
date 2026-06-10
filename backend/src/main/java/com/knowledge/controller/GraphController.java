@@ -30,6 +30,9 @@ public class GraphController {
      * @param itemId 可选，查询指定事项的图谱；不传则返回全局概览
      */
     @GetMapping
+    @org.springframework.cache.annotation.Cacheable(
+            value = "graphOverview", key = "#user.department.name",
+            condition = "#itemId == null || #itemId.isEmpty()")
     public ApiResponse<GraphData> query(
             @RequestParam(required = false) String itemId,
             @AuthenticationPrincipal User user) {
