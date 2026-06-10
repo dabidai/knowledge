@@ -1,4 +1,12 @@
 spring:
+  # 测试环境禁用 Redis 自动配置（无 Redis 实例）
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration
+      - org.springframework.boot.autoconfigure.elasticsearch.ElasticsearchRestClientAutoConfiguration
+      - org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer
   # 测试用 H2 内存数据库
   datasource:
     url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
@@ -54,6 +62,6 @@ neo4j:
 
 # 文档解析
 document:
-  temp-dir: ${java.io.tmpdir}/test-parser
+  work-dir: ${java.io.tmpdir}/test-import
   chunk-size: 512
   chunk-overlap: 64

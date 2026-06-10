@@ -39,7 +39,7 @@ export const authApi = {
 }
 
 export const searchApi = {
-  search: (data: { query: string; topK?: number }) =>
+  search: (data: { query: string; topK?: number; category?: string; year?: string; itemType?: string }) =>
     http.post('/search', data),
 }
 
