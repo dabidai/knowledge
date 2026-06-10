@@ -14,3 +14,11 @@ data/*.db
 *.mp4
 *.mov
 maven-status/
+
+# Docker 运行时数据
+docker/data/
+docker/ollama/
+
+# 错误日志
+error.txt
+docker/error.txt
