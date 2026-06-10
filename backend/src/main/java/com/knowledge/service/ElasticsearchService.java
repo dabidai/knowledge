@@ -57,24 +57,37 @@ public class ElasticsearchService {
     }
 
     /**
-     * 混合检索：BM25 关键词 + KNN 向量
+     * 混合检索：BM25 关键词 + KNN 向量，支持分类/年度/事项类型筛选。
+     *
      * @param queryText   查询文本
      * @param queryVector 查询向量（可为 null，仅做 BM25）
      * @param deptName    用户所在部门（用于权限过滤）
      * @param topK        返回结果数
+     * @param category    事项分类筛选（"" 表示不过滤）
+     * @param year        年度筛选（"" 表示不过滤）
+     * @param itemType    事项类型筛选（"" 表示不过滤）
      */
     public List<DocIndex> hybridSearch(String queryText, float[] queryVector,
-                                        String deptName, int topK) throws IOException {
+                                        String deptName, int topK,
+                                        String category, String year, String itemType) throws IOException {
 
         // BM25 子查询
         Query bm25Query = Query.of(q -> q
                 .bool(BoolQuery.of(b -> {
                     b.must(m -> m.match(ma -> ma.field("content").query(queryText)));
                     // 权限过滤：本部门 OR 公共区
-                    b.filter(f -> f.bool(bf -> bf
-                            .should(s -> s.term(t -> t.field("deptName").value(deptName)))
-                            .should(s -> s.term(t -> t.field("isPublic").value(true)))
-                    ));
+                    b.filter(f -> f.bool(bf -> {
+                        bf.should(s -> s.term(t -> t.field("deptName").value(deptName)))
+                          .should(s -> s.term(t -> t.field("isPublic").value(true)));
+                        return bf;
+                    }));
+                    // 元数据筛选
+                    if (category != null && !category.isEmpty()) {
+                        b.filter(f -> f.term(t -> t.field("itemCategory").value(category)));
+                    }
+                    if (year != null && !year.isEmpty()) {
+                        b.filter(f -> f.term(t -> t.field("itemYear").value(Integer.parseInt(year))));
+                    }
                     return b;
                 }))
         );

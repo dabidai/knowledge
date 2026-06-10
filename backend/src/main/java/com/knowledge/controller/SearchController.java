@@ -3,6 +3,7 @@ package com.knowledge.controller;
 import com.knowledge.dto.ApiResponse;
 import com.knowledge.dto.SearchResult;
 import com.knowledge.entity.User;
+import com.knowledge.security.RateLimit;
 import com.knowledge.service.AIClient;
 import com.knowledge.service.ElasticsearchService;
 import com.knowledge.service.ElasticsearchService.DocIndex;
@@ -26,15 +27,20 @@ public class SearchController {
     private final AIClient aiClient;
     private final MinioService minioService;
 
-    /** 综合检索 —— 返回 RAG 答案 + 来源文档 + 下载链接 */
+    /** 综合检索 —— 返回 RAG 答案 + 来源文档 + 下载链接，支持分类/年度/部门筛选 */
     @PostMapping
-    @Cacheable(value = "search", key = "#body['query'] + '_' + #body['topK'] + '_' + #user.department.name")
+    @RateLimit(maxRequests = 30, windowSeconds = 60)
+    @Cacheable(value = "search", key = "#body['query'] + '_' + #body['topK'] + '_' " +
+            "+ #body['category'] + '_' + #body['year'] + '_' + #user.department.name")
     public ApiResponse<SearchResult> search(
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
 
         String query = (String) body.getOrDefault("query", "");
         int topK = (int) body.getOrDefault("topK", 5);
+        String category = (String) body.getOrDefault("category", "");
+        String year = (String) body.getOrDefault("year", "");
+        String itemType = (String) body.getOrDefault("itemType", "");
 
         if (query == null || query.isBlank()) {
             return ApiResponse.error(400, "查询内容不能为空");
@@ -44,9 +50,10 @@ public class SearchController {
             // 1. 生成查询向量
             float[] queryVector = aiClient.embed(query);
 
-            // 2. ES 混合检索
+            // 2. ES 混合检索（带元数据筛选）
             String deptName = user.getDepartment().getName();
-            List<DocIndex> docs = esService.hybridSearch(query, queryVector, deptName, topK);
+            List<DocIndex> docs = esService.hybridSearch(query, queryVector, deptName, topK,
+                    category, year, itemType);
 
             // 3. 整理来源文档
             Set<String> seenFileIds = new HashSet<>();
