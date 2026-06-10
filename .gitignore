@@ -1,7 +1,16 @@
-node_modules / __pycache__
-dist / target / .next
-.idea / .vscode
-.env / .env.*
-logs / *.log
-uploads / data/*.db
-*.mp4 / *.mov
+node_modules/
+__pycache__/
+dist/
+target/
+.next/
+.idea/
+.vscode/
+.env
+.env.*
+logs/
+*.log
+uploads/
+data/*.db
+*.mp4
+*.mov
+maven-status/
