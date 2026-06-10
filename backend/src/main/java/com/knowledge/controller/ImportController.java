@@ -89,7 +89,7 @@ public class ImportController {
         return ApiResponse.ok("任务已删除");
     }
 
-    /** 重试失败任务 —— 重置状态以便重新导入 */
+    /** 重试失败任务 —— 从中断处断点续传，无需重新上传 */
     @PostMapping("/tasks/{batchId}/retry")
     @org.springframework.cache.annotation.CacheEvict(value = "importTasks", allEntries = true)
     public ApiResponse<String> retryTask(@PathVariable String batchId) {
@@ -97,14 +97,15 @@ public class ImportController {
         if (task == null) {
             return ApiResponse.error(404, "任务不存在");
         }
-        if (!"failed".equals(task.getStatus())) {
-            return ApiResponse.error(400, "只能重试失败的任务，当前状态: " + task.getStatus());
+        if (!"failed".equals(task.getStatus()) && !"parsing".equals(task.getStatus())
+                && !"metadata_parsed".equals(task.getStatus())) {
+            return ApiResponse.error(400, "当前状态不支持重试: " + task.getStatus());
         }
-        task.setStatus("pending");
-        task.setErrors(null);
-        task.setProcessedFiles(0);
-        task.setCompletedAt(null);
-        taskRepo.save(task);
-        return ApiResponse.ok("任务已重置为待处理，请重新上传文件导入");
+        try {
+            importService.resumeImport(batchId);
+            return ApiResponse.ok("导入已从中断处恢复");
+        } catch (Exception e) {
+            return ApiResponse.error(500, "续传失败: " + e.getMessage());
+        }
     }
 }

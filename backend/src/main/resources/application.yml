@@ -79,8 +79,8 @@ neo4j:
 
 # ==================== 文档解析 ====================
 document:
-  # 解析后的临时目录
-  temp-dir: ${java.io.tmpdir}/knowledge-parser
+  # 导入工作目录（持久化，用于断点续传）
+  work-dir: data/import
   # 文本分块大小 (字符数)
   chunk-size: 512
   # 分块重叠 (字符数)

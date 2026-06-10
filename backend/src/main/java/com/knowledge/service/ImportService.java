@@ -15,8 +15,10 @@ import java.nio.file.*;
 import java.util.*;
 
 /**
- * 文档导入编排服务
- * 统筹 CSV 解析 → 文件解析 → MinIO 存储 → Embedding → ES 索引 全流程
+ * 文档导入编排服务 —— 统筹 CSV 解析 → 文件解析 → MinIO 存储 → Embedding → ES 索引全流程。
+ *
+ * <p>支持断点续传：导入过程中每个文档处理完后更新进度，如果中途失败，
+ * 可通过 resumeImport 从中断处继续，已处理的文档自动跳过。
  */
 @Slf4j
 @Service
@@ -33,9 +35,9 @@ public class ImportService {
     private final ImportTaskRepository taskRepo;
     private final DocumentRepository docRepo;
 
-    /** 文档解压临时目录 */
-    @Value("${document.temp-dir}")
-    private String tempDir;
+    /** 导入工作目录（持久化，用于断点续传） */
+    @Value("${document.work-dir}")
+    private String workDir;
 
     /** 文本分块大小（字符数） */
     @Value("${document.chunk-size}")
@@ -67,8 +69,8 @@ public class ImportService {
                 .build();
         taskRepo.save(task);
 
-        // 2. 解压至临时目录
-        Path extractDir = Path.of(tempDir, batchId);
+        // 2. 解压至工作目录（持久化，支持断点续传）
+        Path extractDir = Path.of(workDir, batchId);
         Files.createDirectories(extractDir);
         extractArchive(file.getInputStream(), extractDir);
         task.setStatus("metadata_parsed");
@@ -160,11 +162,111 @@ public class ImportService {
             log.warn("交叉引用检测失败: {}", e.getMessage());
         }
 
-        // 7. 清理临时文件
-        deleteRecursively(extractDir);
-
-        log.info("导入完成: batchId={}, 文件数={}", batchId, docFiles.size());
+        // 7. 保留工作目录以便后续断点续传（不删除）
+        log.info("导入完成: batchId={}, 文件数={}, 工作目录保留", batchId, docFiles.size());
         return batchId;
+    }
+
+    /**
+     * 断点续传 —— 从中断处恢复导入。
+     * 重新扫描工作目录，跳过已处理的文档，只处理剩余的。
+     *
+     * @param batchId 导入批次号
+     */
+    @Transactional
+    public void resumeImport(String batchId) throws Exception {
+        ImportTask task = taskRepo.findByBatchId(batchId)
+                .orElseThrow(() -> new IllegalArgumentException("任务不存在: " + batchId));
+
+        if (!"failed".equals(task.getStatus()) && !"parsing".equals(task.getStatus())
+                && !"metadata_parsed".equals(task.getStatus())) {
+            throw new IllegalStateException("当前状态不支持续传: " + task.getStatus());
+        }
+
+        Path extractDir = Path.of(workDir, batchId);
+        if (!Files.exists(extractDir)) {
+            throw new IllegalStateException("工作目录不存在，无法续传: " + extractDir);
+        }
+
+        boolean isPublic = "public".equals(task.getTargetDept());
+        String targetDept = task.getTargetDept();
+
+        // 收集已处理文档的文件名集合
+        Set<String> processedNames = new HashSet<>();
+        for (Document d : docRepo.findByImportBatch(batchId)) {
+            if ("matched".equals(d.getStatus()) || "orphan".equals(d.getStatus())) {
+                if (d.getMinioPath() != null) {
+                    processedNames.add(d.getFileName());
+                    // 同时存储提取的基本名，用于模糊匹配
+                    processedNames.add(extractBaseName(d.getFileName()));
+                }
+            }
+        }
+
+        // 重新扫描文档文件
+        List<Path> remainingFiles = new ArrayList<>();
+        try (var stream = Files.walk(extractDir)) {
+            for (Path p : stream.filter(Files::isRegularFile).toList()) {
+                String name = p.getFileName().toString().toLowerCase();
+                if (name.endsWith(".doc") || name.endsWith(".docx")
+                        || name.endsWith(".pdf") || name.endsWith(".ofd")) {
+                    String baseName = extractBaseName(name);
+                    // 跳过已处理的文件
+                    if (!processedNames.contains(p.getFileName().toString())
+                            && !processedNames.contains(baseName)
+                            && !processedNames.contains(name)) {
+                        remainingFiles.add(p);
+                    }
+                }
+            }
+        }
+
+        if (remainingFiles.isEmpty()) {
+            task.setStatus("complete");
+            task.setCompletedAt(java.time.LocalDateTime.now());
+            taskRepo.save(task);
+            log.info("断点续传 —— 无剩余文件: batchId={}", batchId);
+            return;
+        }
+
+        log.info("断点续传 —— batchId={}, 剩余 {} 个文件 (已跳过 {} 个)",
+                batchId, remainingFiles.size(), task.getTotalFiles() - remainingFiles.size());
+
+        // 处理剩余文件
+        task.setStatus("parsing");
+        task.setTotalFiles(task.getProcessedFiles() + remainingFiles.size());
+        taskRepo.save(task);
+
+        for (int i = 0; i < remainingFiles.size(); i++) {
+            Path docPath = remainingFiles.get(i);
+            try {
+                processDocument(docPath, targetDept, isPublic, batchId);
+                task.setProcessedFiles(task.getProcessedFiles() + 1);
+                taskRepo.save(task);
+            } catch (Exception e) {
+                log.error("文档解析失败: {}", docPath.getFileName(), e);
+                appendError(task, docPath.getFileName() + ": " + e.getMessage());
+            }
+        }
+
+        // 完成
+        task.setStatus("complete");
+        task.setCompletedAt(java.time.LocalDateTime.now());
+        task.setErrors(null); // 清除之前失败的错误信息
+        taskRepo.save(task);
+
+        log.info("断点续传完成: batchId={}, 最终处理 {} 个文件", batchId, task.getProcessedFiles());
+    }
+
+    /**
+     * 清理导入工作目录。
+     *
+     * @param batchId 导入批次号
+     */
+    public void cleanupWorkDir(String batchId) {
+        Path dir = Path.of(workDir, batchId);
+        deleteRecursively(dir);
+        log.info("工作目录已清理: {}", batchId);
     }
 
     /** 处理单个文档：解析 → 存储 → Embedding → 索引，返回解析后的纯文本 */
