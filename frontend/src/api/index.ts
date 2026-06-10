@@ -43,6 +43,11 @@ export const searchApi = {
     http.post('/search', data),
 }
 
+export const chatApi = {
+  send: (data: { question: string; topK?: number; history?: { role: string; content: string }[] }) =>
+    http.post('/chat', data),
+}
+
 export const importApi = {
   upload: (formData: FormData) =>
     http.post('/import/upload', formData, {

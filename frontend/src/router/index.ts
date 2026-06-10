@@ -16,6 +16,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/chat',
+      name: 'Chat',
+      component: () => import('@/views/ChatPage.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/import',
       name: 'Import',
       component: () => import('@/views/ImportPage.vue'),
@@ -47,7 +53,7 @@ const router = createRouter({
     },
     {
       path: '/',
-      redirect: '/search',
+      redirect: '/chat',
     },
   ],
 })

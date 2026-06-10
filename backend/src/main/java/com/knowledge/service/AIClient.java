@@ -12,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
+import java.util.Map;
 
 /** AI 服务 HTTP 客户端 —— 调用 Python FastAPI */
 @Slf4j
@@ -76,6 +77,37 @@ public class AIClient {
         }
     }
 
+    /**
+     * 智能体对话 —— 支持多轮历史 + RAG 上下文。
+     *
+     * @param question 当前问题
+     * @param contexts 检索到的文档片段
+     * @param history  对话历史列表 [{role: "user"|"assistant", content: "..."}]
+     */
+    public String chat(String question, List<String> contexts,
+                       List<Map<String, String>> history) {
+        try {
+            ChatRequest req = new ChatRequest(question, contexts, history);
+            String json = objectMapper.writeValueAsString(req);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(aiServiceUrl + "/chat"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json))
+                    .timeout(java.time.Duration.ofMinutes(3))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofString());
+
+            AskResponse resp = objectMapper.readValue(response.body(), AskResponse.class);
+            return resp.answer;
+        } catch (Exception e) {
+            log.error("智能体对话失败", e);
+            return "抱歉，AI 服务暂时不可用。";
+        }
+    }
+
     /** 健康检查 */
     public boolean health() {
         try {
@@ -118,5 +150,19 @@ public class AIClient {
     @Data
     public static class AskResponse {
         private String answer;
+    }
+
+    @Data
+    public static class ChatRequest {
+        private String question;
+        private List<String> contexts;
+        @JsonProperty("history")
+        private List<Map<String, String>> history;
+        public ChatRequest(String question, List<String> contexts,
+                           List<Map<String, String>> history) {
+            this.question = question;
+            this.contexts = contexts;
+            this.history = history;
+        }
     }
 }

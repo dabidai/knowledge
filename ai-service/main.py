@@ -27,17 +27,18 @@ embedder: Optional[SentenceTransformer] = None
 llm: Optional[ChatOllama] = None
 
 # ============ RAG Prompt 模板 ============
-RAG_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """你是一个政府公文知识库助手。请根据以下文档片段回答用户的问题。
+RAG_SYSTEM = """你是一个政府公文知识库智能助手。请根据以下文档片段回答用户的问题。
 
 规则：
 1. 仅根据提供的文档片段回答，不要编造信息
 2. 如果文档片段不足以回答问题，请明确说明"根据已有资料无法确定"
 3. 回答要简洁专业，使用正式语言
 4. 如果涉及多个文档，请分别引用
-5. 在答案末尾列出引用的文档名称
+5. 在答案末尾列出引用的文档名称"""
 
-文档片段：
+RAG_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", RAG_SYSTEM),
+    ("user", """文档片段：
 {context}
 
 ---
@@ -46,6 +47,50 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
 
 请回答："""),
 ])
+
+# 多轮对话 Prompt 模板
+CHAT_SYSTEM = """你是一个政府公文知识库智能助手。你的职责是：
+1. 根据提供的知识库文档片段回答用户问题
+2. 如果文档中有明确信息，直接回答并引用来源
+3. 如果文档信息不足，可以结合你的理解补充，但要明确说明哪些是你的推断
+4. 保持正式、专业的公文风格
+5. 如果用户问题与知识库无关，也可以正常聊天回答
+6. 回答末尾标注信息来源文档编号"""
+
+
+# ============ 构建聊天消息 ============
+
+def build_chat_messages(contexts: List[str], history: Optional[List[dict]], question: str):
+    """构建带历史的多轮对话消息列表"""
+    messages = [("system", CHAT_SYSTEM)]
+
+    # 注入历史对话
+    if history:
+        for msg in history[-10:]:  # 最多保留 10 轮
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role in ("user", "assistant"):
+                messages.append((role, content))
+
+    # 注入文档上下文 + 当前问题
+    if contexts:
+        ctx_text = "\n\n---\n\n".join(
+            f"[文档{i+1}] {ctx[:1500]}" for i, ctx in enumerate(contexts[:10])
+        )
+        messages.append(("user", f"""根据以下文档片段回答我的问题。
+
+文档片段：
+{ctx_text}
+
+---
+
+我的问题：{question}
+
+请回答（并引用文档编号）："""))
+    else:
+        messages.append(("user", question))
+
+    return messages
 
 
 @asynccontextmanager
@@ -85,9 +130,16 @@ class EmbedResponse(BaseModel):
 class AskRequest(BaseModel):
     question: str
     contexts: List[str]
+    history: Optional[List[dict]] = None  # {role: "user"|"assistant", content: str}
 
 class AskResponse(BaseModel):
     answer: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    contexts: List[str]
+    history: Optional[List[dict]] = None  # 多轮对话历史
 
 
 # ============ API 端点 ============
@@ -113,12 +165,11 @@ async def embed(req: EmbedRequest):
 
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
-    """RAG 问答 —— 基于文档上下文回答问题"""
+    """RAG 问答 —— 基于文档上下文回答问题（兼容旧接口）"""
     if llm is None:
         raise HTTPException(status_code=503, detail="LLM 未连接")
 
     try:
-        # 组装上下文（限制总长度避免超出上下文窗口）
         contexts_text = "\n\n---\n\n".join(
             f"[文档{i+1}] {ctx[:1500]}" for i, ctx in enumerate(req.contexts[:10])
         )
@@ -134,6 +185,28 @@ async def ask(req: AskRequest):
 
     except Exception as e:
         logger.error(f"问答失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat", response_model=AskResponse)
+async def chat(req: ChatRequest):
+    """智能体对话 —— 支持多轮历史 + RAG 知识库上下文"""
+    if llm is None:
+        raise HTTPException(status_code=503, detail="LLM 未连接")
+
+    try:
+        messages = build_chat_messages(req.contexts, req.history, req.question)
+        prompt = ChatPromptTemplate.from_messages(messages)
+        chain = prompt | llm | StrOutputParser()
+
+        answer = chain.invoke({})
+
+        logger.info(f"对话完成, 历史轮次={len(req.history) if req.history else 0}, "
+                    f"上下文数={len(req.contexts)}, 答案长度={len(answer)}")
+        return AskResponse(answer=answer)
+
+    except Exception as e:
+        logger.error(f"对话失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
