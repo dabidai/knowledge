@@ -3,7 +3,7 @@ package com.knowledge.service;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
-import co.elastic.clients.elasticsearch._types.KnnQuery;
+import co.elastic.clients.elasticsearch._types.KnnSearch;
 import co.elastic.clients.elasticsearch.core.*;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
@@ -81,17 +81,15 @@ public class ElasticsearchService {
 
         if (queryVector != null && queryVector.length > 0) {
             // 有向量：BM25 + KNN 混合，用 RRF 融合
-            KnnQuery knn = KnnQuery.of(k -> k
-                    .field("contentVector")
-                    .queryVector(Arrays.asList(toFloatList(queryVector)))
-                    .k(topK * 2)
-                    .numCandidates(topK * 5)
-            );
-
             SearchResponse<DocIndex> response = esClient.search(SearchRequest.of(s -> s
                     .index(indexName)
                     .query(bm25Query)
-                    .knn(knn)
+                    .knn(KnnSearch.of(k -> k
+                            .field("contentVector")
+                            .queryVector(Arrays.asList(toFloatList(queryVector)))
+                            .k(topK * 2)
+                            .numCandidates(topK * 5)
+                    ))
                     .size(topK)
                     .highlight(h -> h
                             .fields("content", hf -> hf
