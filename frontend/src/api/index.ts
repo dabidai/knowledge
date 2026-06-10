@@ -50,6 +50,18 @@ export const importApi = {
     }),
   progress: (batchId: string) =>
     http.get(`/import/progress/${batchId}`),
+  tasks: () =>
+    http.get('/import/tasks'),
+}
+
+export const browseApi = {
+  tree: () => http.get('/browse/tree'),
+  doc: (fileId: string) => http.get(`/browse/doc/${fileId}`),
+}
+
+export const graphApi = {
+  query: (itemId?: string) =>
+    http.get('/graph', { params: itemId ? { itemId } : {} }),
 }
 
 export const userApi = {

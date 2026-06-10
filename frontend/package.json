@@ -9,19 +9,20 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.5.13",
-    "vue-router": "^4.4.5",
-    "pinia": "^2.2.6",
-    "element-plus": "^2.8.8",
+    "@antv/g6": "^5.0.36",
     "@element-plus/icons-vue": "^2.3.1",
     "axios": "^1.7.8",
-    "@antv/g6": "^5.0.36"
+    "echarts": "^6.1.0",
+    "element-plus": "^2.8.8",
+    "pinia": "^2.2.6",
+    "vue": "^3.5.13",
+    "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "^5.6.3",
     "vite": "^6.0.1",
-    "vue-tsc": "^2.1.10",
-    "@types/node": "^22.10.0"
+    "vue-tsc": "^2.1.10"
   }
 }

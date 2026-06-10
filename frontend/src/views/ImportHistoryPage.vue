@@ -1,8 +1,108 @@
 <template>
   <div class="history-page">
     <el-card>
-      <template #header><strong>📜 导入历史</strong></template>
-      <el-empty description="导入历史功能开发中... (Phase 2)" />
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>📜 导入历史</strong>
+          <el-button @click="refresh" :loading="loading" size="small">刷新</el-button>
+        </div>
+      </template>
+
+      <el-table :data="tasks" v-loading="loading" stripe empty-text="暂无导入记录">
+        <el-table-column prop="batchId" label="批次号" min-width="180">
+          <template #default="{ row }">
+            <el-tag type="info" size="small">{{ row.batchId?.substring(0, 8) }}...</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="archiveName" label="压缩包" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="targetDept" label="目标位置" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.targetDept === 'public' ? 'success' : ''" size="small">
+              {{ row.targetDept === 'public' ? '公共区' : row.targetDept }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'complete'" type="success" size="small">完成</el-tag>
+            <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
+            <el-tag v-else-if="row.status === 'pending'" type="info" size="small">等待中</el-tag>
+            <el-tag v-else type="warning" size="small">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="进度" width="160">
+          <template #default="{ row }">
+            <el-progress
+              :percentage="row.totalFiles > 0 ? Math.round(row.processedFiles * 100 / row.totalFiles) : 0"
+              :status="row.status === 'failed' ? 'exception' : row.status === 'complete' ? 'success' : undefined"
+            />
+            <span style="font-size:12px;color:#999">{{ row.processedFiles }} / {{ row.totalFiles }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="创建时间" width="170" />
+        <el-table-column prop="completedAt" label="完成时间" width="170">
+          <template #default="{ row }">
+            {{ row.completedAt || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="showDetail(row)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
+
+    <!-- 详情弹窗 -->
+    <el-dialog v-model="dialogVisible" title="导入详情" width="600px">
+      <el-descriptions :column="2" border>
+        <el-descriptions-item label="批次号">{{ currentTask?.batchId }}</el-descriptions-item>
+        <el-descriptions-item label="压缩包">{{ currentTask?.archiveName }}</el-descriptions-item>
+        <el-descriptions-item label="目标位置">{{ currentTask?.targetDept }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag v-if="currentTask?.status === 'complete'" type="success" size="small">完成</el-tag>
+          <el-tag v-else-if="currentTask?.status === 'failed'" type="danger" size="small">失败</el-tag>
+          <el-tag v-else type="info" size="small">{{ currentTask?.status }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="文件进度">{{ currentTask?.processedFiles }} / {{ currentTask?.totalFiles }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ currentTask?.createdAt }}</el-descriptions-item>
+        <el-descriptions-item label="完成时间">{{ currentTask?.completedAt || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="错误信息" :span="2">
+          <span v-if="currentTask?.errors" style="color:red">{{ currentTask.errors }}</span>
+          <span v-else style="color:#999">无</span>
+        </el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
   </div>
 </template>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { importApi } from '@/api'
+
+const tasks = ref<any[]>([])
+const loading = ref(false)
+const dialogVisible = ref(false)
+const currentTask = ref<any>(null)
+
+async function refresh() {
+  loading.value = true
+  try {
+    const res = await importApi.tasks()
+    tasks.value = res.data.data || []
+  } finally {
+    loading.value = false
+  }
+}
+
+function showDetail(task: any) {
+  currentTask.value = task
+  dialogVisible.value = true
+}
+
+refresh()
+</script>
+
+<style scoped>
+.history-page { max-width: 1200px; margin: 0 auto; }
+</style>
