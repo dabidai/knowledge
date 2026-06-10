@@ -8,10 +8,14 @@ import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.springframework.stereotype.Component;
+import org.w3c.dom.*;
+import javax.xml.parsers.*;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * 文档解析引擎
@@ -75,10 +79,72 @@ public class DocumentParser {
         }
     }
 
-    /** 解析 OFD（占位，后续接入 ofdrw） */
+    /**
+     * 解析 OFD 版式文档
+     * OFD 本质是 ZIP 压缩包，内含 XML 文件。遍历 Content.xml 提取文本。
+     */
     private String parseOfd(Path filePath) {
-        log.warn("OFD 解析尚未实现: {}", filePath);
-        return "[OFD 文档解析待实现] " + filePath.getFileName();
+        try (ZipFile zip = new ZipFile(filePath.toFile())) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            StringBuilder sb = new StringBuilder();
+
+            // 1. 先读取 OFD.xml 获取文档入口结构
+            // 2. 遍历所有 Content_*.xml（即各页面的内容文件）
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+
+                // OFD 页面内容文件通常在 Doc_0/Pages/Content_*.xml 或 Pages/Content_*.xml
+                if (name.contains("Content") && name.endsWith(".xml")
+                        && !name.contains("_Res") && !name.contains("Annotations")) {
+                    try (InputStream is = zip.getInputStream(entry)) {
+                        Document doc = builder.parse(is);
+                        extractTextFromXml(doc.getDocumentElement(), sb);
+                    }
+                }
+            }
+
+            // 如果没有找到 Content 文件，尝试读取所有 XML 文件
+            if (sb.isEmpty()) {
+                entries = zip.entries();
+                while (entries.hasMoreElements()) {
+                    ZipEntry entry = entries.nextElement();
+                    if (entry.getName().endsWith(".xml") && !entry.getName().equals("OFD.xml")) {
+                        try (InputStream is = zip.getInputStream(entry)) {
+                            Document doc = builder.parse(is);
+                            extractTextFromXml(doc.getDocumentElement(), sb);
+                        }
+                    }
+                }
+            }
+
+            // 去重和清理
+            String result = sb.toString().trim();
+            if (result.isEmpty()) {
+                log.warn("OFD 文件未能提取到文本: {}", filePath.getFileName());
+                return "[OFD 文档 — 未能提取文本内容] " + filePath.getFileName();
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("OFD 解析失败: {}", filePath, e);
+            return "[OFD 解析异常: " + e.getMessage() + "] " + filePath.getFileName();
+        }
+    }
+
+    /** 递归提取 XML 节点中的文本 */
+    private void extractTextFromXml(Node node, StringBuilder sb) {
+        if (node.getNodeType() == Node.TEXT_NODE) {
+            String text = node.getNodeValue().trim();
+            if (!text.isEmpty()) {
+                sb.append(text).append("\n");
+            }
+        }
+        NodeList children = node.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            extractTextFromXml(children.item(i), sb);
+        }
     }
 
     /**
