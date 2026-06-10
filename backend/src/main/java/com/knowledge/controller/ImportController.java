@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 
 /** 文档导入控制器 */
@@ -57,5 +58,12 @@ public class ImportController {
                 .build();
 
         return ApiResponse.ok(progress);
+    }
+
+    /** 查询导入历史列表 */
+    @GetMapping("/tasks")
+    public ApiResponse<List<ImportTask>> tasks() {
+        List<ImportTask> tasks = taskRepo.findAllByOrderByCreatedAtDesc();
+        return ApiResponse.ok(tasks);
     }
 }
