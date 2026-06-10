@@ -78,8 +78,12 @@ public class HealthController {
 
         // Elasticsearch
         checks.put("elasticsearch", timedCheck("Elasticsearch", () -> {
-            boolean ok = esClient.ping().value();
-            if (!ok) throw new RuntimeException("Ping 返回 false");
+            try {
+                boolean ok = esClient.ping().value();
+                if (!ok) throw new RuntimeException("Ping 返回 false");
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e.getMessage(), e);
+            }
         }));
 
         // Neo4j
@@ -91,11 +95,11 @@ public class HealthController {
 
         // MinIO
         checks.put("minio", timedCheck("MinIO", () -> {
-            boolean exists = minioClient.bucketExists(
-                    BucketExistsArgs.builder().bucket(bucketDocs).build());
-            if (!exists) {
-                // Bucket 可能不存在，但服务是通的
-                log.debug("MinIO Bucket {} 不存在，但服务连通正常", bucketDocs);
+            try {
+                minioClient.bucketExists(
+                        BucketExistsArgs.builder().bucket(bucketDocs).build());
+            } catch (Exception e) {
+                throw new RuntimeException(e.getMessage(), e);
             }
         }));
 
