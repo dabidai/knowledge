@@ -28,8 +28,10 @@ public class ImportService {
     private final MinioService minioService;
     private final ElasticsearchService esService;
     private final AIClient aiClient;
+    private final GraphBuildService graphBuildService;
     private final ImportTaskRepository taskRepo;
     private final DocumentRepository docRepo;
+    private final ItemRepository itemRepo;
 
     @Value("${document.temp-dir}")
     private String tempDir;
@@ -50,7 +52,10 @@ public class ImportService {
         String batchId = UUID.randomUUID().toString().replace("-", "");
         boolean isPublic = "public".equals(targetDept);
 
-        // 1. 创建导入任务
+        // 1. 确保 Neo4j 约束就绪
+        graphBuildService.ensureConstraints();
+
+        // 2. 创建导入任务
         ImportTask task = ImportTask.builder()
                 .batchId(batchId)
                 .archiveName(file.getOriginalFilename())
@@ -105,10 +110,19 @@ public class ImportService {
         task.setTotalFiles(docFiles.size());
         taskRepo.save(task);
 
+        // 收集文档文本用于交叉引用检测
+        List<GraphBuildService.DocRef> docRefsForRefDetect = new ArrayList<>();
+
         for (int i = 0; i < docFiles.size(); i++) {
             Path docPath = docFiles.get(i);
             try {
-                processDocument(docPath, targetDept, isPublic, batchId);
+                String plainText = processDocument(docPath, targetDept, isPublic, batchId);
+                // 记录文档文本用于后续交叉引用检测
+                if (plainText != null && !plainText.isEmpty()) {
+                    // 从 ES 或 DB 获取该文档的 fileId 和 categoryNo
+                    docRefsForRefDetect.add(new GraphBuildService.DocRef(
+                            null, plainText, null, null));
+                }
                 task.setProcessedFiles(i + 1);
                 taskRepo.save(task);
             } catch (Exception e) {
@@ -117,10 +131,27 @@ public class ImportService {
             }
         }
 
-        // 6. 完成
+        // 6. 交叉引用检测 —— 基于文档内容和分类编号
         task.setStatus("complete");
         task.setCompletedAt(java.time.LocalDateTime.now());
         taskRepo.save(task);
+
+        try {
+            // 重新查询已匹配的文档及其事项信息用于引用检测
+            List<GraphBuildService.DocRef> docRefsWithMeta = docRepo.findAll().stream()
+                    .filter(d -> d.getTextLength() != null && d.getTextLength() > 0)
+                    .map(d -> {
+                        String categoryNo = d.getItem() != null ? d.getItem().getCategoryNo() : null;
+                        return new GraphBuildService.DocRef(
+                                d.getFileId(), "", categoryNo, null);
+                    })
+                    .toList();
+            if (!docRefsWithMeta.isEmpty()) {
+                graphBuildService.detectCrossReferences(docRefsWithMeta);
+            }
+        } catch (Exception e) {
+            log.warn("交叉引用检测失败: {}", e.getMessage());
+        }
 
         // 7. 清理临时文件
         deleteRecursively(extractDir);
@@ -129,8 +160,8 @@ public class ImportService {
         return batchId;
     }
 
-    /** 处理单个文档：解析 → 存储 → Embedding → 索引 */
-    private void processDocument(Path docPath, String deptName, boolean isPublic,
+    /** 处理单个文档：解析 → 存储 → Embedding → 索引，返回解析后的纯文本 */
+    private String processDocument(Path docPath, String deptName, boolean isPublic,
                                   String batchId) throws IOException {
         String fileName = docPath.getFileName().toString();
         log.debug("处理文档: {}", fileName);
@@ -150,16 +181,20 @@ public class ImportService {
         if (matchOpt.isPresent()) {
             doc = matchOpt.get();
             doc.setStatus("matched");
+            // 更新 Neo4j 文档节点状态
+            graphBuildService.createDocument(doc.getFileId(), fileName, "matched");
         } else {
             // 未匹配到 CSV 记录，创建 orphan
+            String newFileId = UUID.randomUUID().toString().replace("-", "");
             doc = Document.builder()
-                    .fileId(UUID.randomUUID().toString().replace("-", ""))
+                    .fileId(newFileId)
                     .fileName(fileName)
                     .status("orphan")
                     .deptName(deptName)
                     .isPublic(isPublic)
                     .importBatch(batchId)
                     .build();
+            graphBuildService.createDocument(newFileId, fileName, "orphan");
         }
 
         // 3. 上传原始文件 → MinIO
@@ -198,6 +233,8 @@ public class ImportService {
                     .build());
         }
         esService.bulkIndex(indexDocs);
+
+        return plainText;
     }
 
     /** 解压归档文件（支持 zip） */

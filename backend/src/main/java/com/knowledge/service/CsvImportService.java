@@ -34,6 +34,7 @@ public class CsvImportService {
     private final DocumentRepository docRepo;
     private final OpinionRepository opinionRepo;
     private final PasswordEncoder passwordEncoder;
+    private final GraphBuildService graphBuildService;
 
     /** 自动检测文件编码并读取为 CSV */
     public List<String[]> readCsv(Path filePath) throws IOException, CsvValidationException {
@@ -98,6 +99,7 @@ public class CsvImportService {
     private void createDeptIfNotExist(String name) {
         if (!deptRepo.existsByName(name)) {
             deptRepo.save(Department.builder().name(name).build());
+            graphBuildService.createDepartment(name);
             log.info("创建部门: {}", name);
         }
     }
@@ -108,7 +110,9 @@ public class CsvImportService {
             Department dept = deptRepo.findByName(deptName)
                     .orElseGet(() -> {
                         Department d = Department.builder().name(deptName).build();
-                        return deptRepo.save(d);
+                        deptRepo.save(d);
+                        graphBuildService.createDepartment(deptName);
+                        return d;
                     });
 
             userRepo.save(User.builder()
@@ -117,6 +121,10 @@ public class CsvImportService {
                     .role(role != null && !role.isEmpty() ? role : "default")
                     .department(dept)
                     .build());
+
+            // 同步 Neo4j
+            graphBuildService.createUser(username, role != null ? role : "default", deptName);
+
             log.info("创建用户: {} ({})", username, deptName);
         }
     }
@@ -153,6 +161,10 @@ public class CsvImportService {
             item.setImportTime(LocalDateTime.now());
 
             items.add(itemRepo.save(item));
+
+            // 同步 Neo4j
+            graphBuildService.createItem(itemId, row[1].trim(), row[3].trim(), deptName, isPublic);
+            graphBuildService.linkDeptOwnsItem(deptName, itemId);
         }
 
         log.info("item.csv 导入完成: {} 条事项", items.size());
@@ -190,6 +202,12 @@ public class CsvImportService {
             doc.setImportBatch(batchId);
 
             docs.add(docRepo.save(doc));
+
+            // 同步 Neo4j
+            graphBuildService.createDocument(fileId, fileName, "expected");
+            if (item != null) {
+                graphBuildService.linkItemContainsDoc(itemId, fileId);
+            }
         }
 
         log.info("file_index.csv 导入完成: {} 条映射", docs.size());
@@ -222,6 +240,12 @@ public class CsvImportService {
             try { opinion.setSignTime(LocalDateTime.parse(row[2].trim(), fmt)); } catch (Exception ignored) {}
 
             opinions.add(opinionRepo.save(opinion));
+
+            // 同步 Neo4j
+            if (item != null) {
+                graphBuildService.createOpinion(item.getItemId(),
+                        row[3].trim(), row[4].trim(), opinion.getSignTime());
+            }
         }
 
         log.info("item_with_opinions.csv 导入完成: {} 条签阅", opinions.size());
