@@ -45,9 +45,16 @@
             {{ row.completedAt || '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="200">
           <template #default="{ row }">
             <el-button link type="primary" @click="showDetail(row)">详情</el-button>
+            <el-button v-if="row.status === 'failed'" link type="warning" @click="handleRetry(row)">
+              重试
+            </el-button>
+            <el-button v-if="row.status === 'failed' || row.status === 'complete'"
+                       link type="danger" @click="handleDelete(row)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -98,6 +105,28 @@ async function refresh() {
 function showDetail(task: any) {
   currentTask.value = task
   dialogVisible.value = true
+}
+
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+async function handleRetry(task: any) {
+  try {
+    await ElMessageBox.confirm('重置该任务状态后，需重新上传文件导入。确定重试？', '确认重试')
+    await importApi.retryTask(task.batchId)
+    ElMessage.success('任务已重置，请重新上传文件')
+    refresh()
+  } catch { /* 取消 */ }
+}
+
+async function handleDelete(task: any) {
+  try {
+    await ElMessageBox.confirm('确定要删除该导入记录吗？此操作不可撤销。', '确认删除', {
+      type: 'warning',
+    })
+    await importApi.deleteTask(task.batchId)
+    ElMessage.success('任务已删除')
+    refresh()
+  } catch { /* 取消 */ }
 }
 
 refresh()

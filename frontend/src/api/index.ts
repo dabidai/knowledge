@@ -52,6 +52,10 @@ export const importApi = {
     http.get(`/import/progress/${batchId}`),
   tasks: () =>
     http.get('/import/tasks'),
+  deleteTask: (batchId: string) =>
+    http.delete(`/import/tasks/${batchId}`),
+  retryTask: (batchId: string) =>
+    http.post(`/import/tasks/${batchId}/retry`),
 }
 
 export const browseApi = {
