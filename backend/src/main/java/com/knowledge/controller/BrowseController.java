@@ -17,20 +17,29 @@ import org.springframework.web.bind.annotation.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/** 结构化浏览控制器 */
+/**
+ * 结构化浏览控制器 —— 提供文档目录树和 Markdown 内容查询。
+ * 用户只能看到本部门及公共区的文档，admin 可查看全部。
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/browse")
 @RequiredArgsConstructor
 public class BrowseController {
 
+    /** MinIO 文件存储服务 */
     private final MinioService minioService;
+    /** 事项元数据仓库 */
     private final ItemRepository itemRepo;
+    /** 文档映射仓库 */
     private final DocumentRepository docRepo;
 
     /**
-     * 获取文档目录树
-     * 结构: 部门 → 事项分类 → 事项 → 文件列表
+     * 获取文档目录树，按「部门 → 事项分类 → 事项 → 文件」四级结构组织。
+     * 缓存 30 分钟，按用户部门隔离。
+     *
+     * @param user 当前认证用户（用于权限过滤）
+     * @return 四级树形结构
      */
     @GetMapping("/tree")
     @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
@@ -38,7 +47,6 @@ public class BrowseController {
         String deptName = user.getDepartment().getName();
         boolean isAdmin = "admin".equals(user.getRole());
 
-        // 获取用户可访问的事项
         List<Item> items;
         if (isAdmin) {
             items = itemRepo.findAll();
@@ -46,7 +54,7 @@ public class BrowseController {
             items = itemRepo.findAccessibleByDept(deptName);
         }
 
-        // 按部门分组 → 事项分类 → 事项 → 文档
+        // 按部门 → 事项分类 → 事项 → 文档 四级分组
         Map<String, Map<String, List<TreeNode.ItemNode>>> deptMap = new LinkedHashMap<>();
 
         for (Item item : items) {
@@ -77,7 +85,7 @@ public class BrowseController {
                     .build());
         }
 
-        // 转换为前端树形结构
+        // 转换为前端 Tree 组件所需的结构
         List<TreeNode> tree = new ArrayList<>();
         for (Map.Entry<String, Map<String, List<TreeNode.ItemNode>>> deptEntry : deptMap.entrySet()) {
             List<TreeNode> catNodes = new ArrayList<>();
@@ -112,7 +120,10 @@ public class BrowseController {
     }
 
     /**
-     * 获取 Markdown 文档内容
+     * 获取文档的结构化 Markdown 内容。
+     *
+     * @param fileId 文件ID
+     * @return 包含 fileId 和 Markdown 内容的 Map
      */
     @GetMapping("/doc/{fileId}")
     public ApiResponse<Map<String, String>> getDocument(@PathVariable String fileId) {
@@ -129,34 +140,52 @@ public class BrowseController {
         }
     }
 
-    // -- DTO --
+    // -- 树形结构 DTO --
 
+    /** 文档树节点，支持部门/分类/事项/文档四种类型 */
     @Data
     @Builder
     public static class TreeNode {
+        /** 节点显示名称 */
         private String label;
-        private String type;  // department | category | item | document
+        /** 节点类型：department | category | item | document */
+        private String type;
+        /** 事项详情（type=item 时有值） */
         private ItemNode item;
+        /** 文档详情（type=document 时有值） */
         private DocNode doc;
+        /** 子节点列表 */
         private List<TreeNode> children;
 
+        /** 事项摘要 */
         @Data
         @Builder
         public static class ItemNode {
+            /** 事项ID */
             private String itemId;
+            /** 事项标题 */
             private String title;
+            /** 分类编号，如 "2021通1234" */
             private String categoryNo;
+            /** 年度 */
             private String year;
+            /** 发文单位 */
             private String issuer;
+            /** 包含的文档列表 */
             private List<DocNode> docs;
         }
 
+        /** 文档摘要 */
         @Data
         @Builder
         public static class DocNode {
+            /** 文件ID */
             private String fileId;
+            /** 文件名/路径 */
             private String fileName;
+            /** 状态：expected / matched / orphan */
             private String status;
+            /** MinIO 中 Markdown 存储路径 */
             private String minioMdPath;
         }
     }

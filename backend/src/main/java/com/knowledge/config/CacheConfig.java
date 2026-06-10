@@ -11,12 +11,28 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
 
 import java.time.Duration;
 
-/** Redis 缓存配置 */
+/**
+ * Redis 缓存配置 —— 按业务域定制 TTL 和序列化策略。
+ *
+ * <p>缓存域及过期策略：
+ * <ul>
+ *   <li>search —— 搜索结果，10 分钟（避免回答过时）</li>
+ *   <li>browseTree —— 文档目录树，30 分钟（变动不频繁）</li>
+ *   <li>graphOverview —— 图谱概览，15 分钟</li>
+ *   <li>importTasks —— 导入历史，2 分钟（需及时反映新任务）</li>
+ * </ul>
+ */
 @Configuration
 @EnableCaching
 public class CacheConfig {
 
-    /** 默认缓存配置：1 小时 TTL，JSON 序列化 */
+    /**
+     * 默认缓存配置。
+     * 使用 Jackson JSON 序列化值，禁止缓存 null，默认 TTL 1 小时。
+     *
+     * @param objectMapper Spring 管理的 ObjectMapper 实例
+     * @return 全局默认的 RedisCacheConfiguration
+     */
     @Bean
     public RedisCacheConfiguration defaultCacheConfig(ObjectMapper objectMapper) {
         Jackson2JsonRedisSerializer<Object> serializer =
@@ -29,25 +45,31 @@ public class CacheConfig {
                 .disableCachingNullValues();
     }
 
-    /** 按缓存名定制 TTL */
+    /**
+     * 按缓存名定制 TTL，覆盖默认的 1 小时配置。
+     *
+     * @return RedisCacheManagerBuilderCustomizer 定制器
+     */
     @Bean
     public RedisCacheManagerBuilderCustomizer cacheCustomizer() {
         return builder -> builder
-                // 搜索结果缓存 10 分钟
                 .withCacheConfiguration("search",
-                        defaultCacheConfigCustom(Duration.ofMinutes(10)))
-                // 文档树缓存 30 分钟
+                        buildWithTtl(Duration.ofMinutes(10)))
                 .withCacheConfiguration("browseTree",
-                        defaultCacheConfigCustom(Duration.ofMinutes(30)))
-                // 图谱概览缓存 15 分钟
+                        buildWithTtl(Duration.ofMinutes(30)))
                 .withCacheConfiguration("graphOverview",
-                        defaultCacheConfigCustom(Duration.ofMinutes(15)))
-                // 导入历史缓存 2 分钟
+                        buildWithTtl(Duration.ofMinutes(15)))
                 .withCacheConfiguration("importTasks",
-                        defaultCacheConfigCustom(Duration.ofMinutes(2)));
+                        buildWithTtl(Duration.ofMinutes(2)));
     }
 
-    private RedisCacheConfiguration defaultCacheConfigCustom(Duration ttl) {
+    /**
+     * 构建指定 TTL 的缓存配置。
+     *
+     * @param ttl 过期时长
+     * @return 含指定 TTL 的 RedisCacheConfiguration
+     */
+    private RedisCacheConfiguration buildWithTtl(Duration ttl) {
         return RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(ttl)
                 .disableCachingNullValues();

@@ -11,19 +11,32 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Neo4j 知识图谱构建服务
- * 在 CSV 导入和文档解析过程中同步创建图节点和关系
+ * Neo4j 知识图谱构建服务 —— 封装所有 Cypher 图操作。
+ * 在 CSV 导入和文档解析过程中同步创建图节点和关系，
+ * 导入完成后执行交叉引用检测。
+ *
+ * <p>图模型：
+ * <pre>
+ *   (:Department) -[:OWNS]-> (:Item) -[:CONTAINS]-> (:Document)
+ *   (:Item) -[:HAS_OPINION]-> (:Opinion) <-[:SIGNED]- (:User)
+ *   (:User) -[:MEMBER_OF]-> (:Department)
+ *   (:Document) -[:REFERENCES]-> (:Document)
+ * </pre>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class GraphBuildService {
 
+    /** Neo4j 驱动（Bolt 协议连接） */
     private final Driver neo4jDriver;
 
     // ==================== 约束初始化 ====================
 
-    /** 确保 Neo4j 中有所需的约束和索引（首次启动时调用） */
+    /**
+     * 确保 Neo4j 中存在所需的唯一性约束和索引。
+     * 首次启动时调用，重复调用幂等。
+     */
     public void ensureConstraints() {
         try (Session session = neo4jDriver.session()) {
             session.run("CREATE CONSTRAINT item_id IF NOT EXISTS FOR (i:Item) REQUIRE i.item_id IS UNIQUE");
@@ -38,7 +51,11 @@ public class GraphBuildService {
 
     // ==================== 部门 ====================
 
-    /** 创建部门节点 */
+    /**
+     * 创建部门节点，已存在则忽略。
+     *
+     * @param name 部门名称
+     */
     public void createDepartment(String name) {
         try (Session session = neo4jDriver.session()) {
             session.run("MERGE (d:Department {name: $name})", Map.of("name", name));
@@ -50,7 +67,15 @@ public class GraphBuildService {
 
     // ==================== 事项 ====================
 
-    /** 创建事项节点 */
+    /**
+     * 创建事项节点（MERGE 保证幂等），并设置标题、分类等属性。
+     *
+     * @param itemId   事项ID（来自 CSV 的原始 ID）
+     * @param title    事项标题
+     * @param category 事项分类（如 "通知"）
+     * @param deptName 所属部门名称
+     * @param isPublic 是否公共区文档
+     */
     public void createItem(String itemId, String title, String category,
                            String deptName, boolean isPublic) {
         try (Session session = neo4jDriver.session()) {
@@ -66,7 +91,12 @@ public class GraphBuildService {
         }
     }
 
-    /** 创建 部门-[:OWNS]->事项 关系 */
+    /**
+     * 创建 部门 → 事项 的归属关系。
+     *
+     * @param deptName 部门名称
+     * @param itemId   事项ID
+     */
     public void linkDeptOwnsItem(String deptName, String itemId) {
         try (Session session = neo4jDriver.session()) {
             session.run("""
@@ -81,7 +111,13 @@ public class GraphBuildService {
 
     // ==================== 文档 ====================
 
-    /** 创建文档节点 */
+    /**
+     * 创建文档节点，已存在则更新文件名和状态。
+     *
+     * @param fileId   文件ID（来自 CSV 的原始 ID 或 UUID）
+     * @param fileName 文件名 / 路径
+     * @param status   状态：expected / matched / orphan
+     */
     public void createDocument(String fileId, String fileName, String status) {
         try (Session session = neo4jDriver.session()) {
             session.run("""
@@ -94,7 +130,12 @@ public class GraphBuildService {
         }
     }
 
-    /** 创建 事项-[:CONTAINS]->文档 关系 */
+    /**
+     * 创建 事项 → 文档 的包含关系。
+     *
+     * @param itemId 事项ID
+     * @param fileId 文件ID
+     */
     public void linkItemContainsDoc(String itemId, String fileId) {
         try (Session session = neo4jDriver.session()) {
             session.run("""
@@ -109,28 +150,37 @@ public class GraphBuildService {
 
     // ==================== 签阅 ====================
 
-    /** 创建签阅节点 + 关系 */
+    /**
+     * 创建签阅节点，并建立 事项→签阅 和 用户→签阅 两条关系。
+     * 如果签阅人未在 user 表中，仅保留签阅节点文本，不创建 User 关联。
+     *
+     * @param itemId   事项ID
+     * @param signer   签阅人姓名
+     * @param content  签阅意见内容
+     * @param signTime 签阅时间
+     */
     public void createOpinion(String itemId, String signer, String content,
                               LocalDateTime signTime) {
         try (Session session = neo4jDriver.session()) {
-            // 创建签阅节点
+            String timeStr = signTime != null ? signTime.toString() : "";
+            String c = content != null ? content : "";
+
+            // 创建签阅节点 + 事项关联
             session.run("""
                 MATCH (i:Item {item_id: $itemId})
                 CREATE (o:Opinion {
-                    signer: $signer, content: $content, sign_time: toString($signTime)
+                    signer: $signer, content: $content, sign_time: $signTime
                 })
                 CREATE (i)-[:HAS_OPINION]->(o)
                 """, Map.of("itemId", itemId, "signer", signer,
-                        "content", content != null ? content : "",
-                        "signTime", signTime != null ? signTime.toString() : ""));
+                        "content", c, "signTime", timeStr));
 
-            // 尝试关联用户
+            // 尝试关联用户节点（签阅人可能在 user.csv 中已导入）
             session.run("""
                 MATCH (u:User {username: $username})
-                MATCH (o:Opinion {signer: $username, sign_time: toString($signTime)})
+                MATCH (o:Opinion {signer: $username, sign_time: $signTime})
                 MERGE (u)-[:SIGNED]->(o)
-                """, Map.of("username", signer, "signTime",
-                        signTime != null ? signTime.toString() : ""));
+                """, Map.of("username", signer, "signTime", timeStr));
         } catch (Exception e) {
             log.error("Neo4j 创建签阅失败: {}", itemId, e);
         }
@@ -138,7 +188,13 @@ public class GraphBuildService {
 
     // ==================== 用户 ====================
 
-    /** 创建用户节点 + 部门归属 */
+    /**
+     * 创建用户节点并关联到所属部门。
+     *
+     * @param username 用户名
+     * @param role     角色（admin / default）
+     * @param deptName 所属部门名称
+     */
     public void createUser(String username, String role, String deptName) {
         try (Session session = neo4jDriver.session()) {
             session.run("""
@@ -157,11 +213,12 @@ public class GraphBuildService {
     // ==================== 交叉引用 ====================
 
     /**
-     * 创建文档间的交叉引用关系
-     * @param sourceFileId  引用方文件ID
-     * @param targetFileId  被引用方文件ID
-     * @param refType       引用类型 (explicit/implicit)
-     * @param context       引用上下文（如"参见2021通1234号"）
+     * 创建文档间的交叉引用关系。
+     *
+     * @param sourceFileId 引用方文件ID
+     * @param targetFileId 被引用方文件ID
+     * @param refType      引用类型（explicit：基于分类编号匹配；implicit：基于语义匹配）
+     * @param context      引用上下文（如 "引用分类编号: 2021通1234"）
      */
     public void createCrossReference(String sourceFileId, String targetFileId,
                                      String refType, String context) {
@@ -179,8 +236,11 @@ public class GraphBuildService {
     }
 
     /**
-     * 批量检测并创建交叉引用
-     * 扫描所有文档内容，查找对其他事项分类编号的引用
+     * 批量检测并创建文档间的交叉引用关系。
+     * 遍历所有文档，检查其文本内容是否包含其他文档的分类编号，
+     * 匹配到则创建 REFERENCES 关系。
+     *
+     * @param allDocs 文档摘要列表，包含文件ID、文本内容、分类编号
      */
     public void detectCrossReferences(List<DocRef> allDocs) {
         log.info("开始交叉引用检测，共 {} 个文档", allDocs.size());
@@ -193,7 +253,6 @@ public class GraphBuildService {
                 if (source.fileId().equals(target.fileId())) continue;
                 if (target.categoryNo() == null || target.categoryNo().isEmpty()) continue;
 
-                // 检查 source 的文本内容是否包含 target 的分类编号
                 if (source.content().contains(target.categoryNo())) {
                     createCrossReference(source.fileId(), target.fileId(),
                             "explicit", "引用分类编号: " + target.categoryNo());
@@ -205,6 +264,12 @@ public class GraphBuildService {
         log.info("交叉引用检测完成: {} 条引用关系", refCount);
     }
 
-    /** 交叉引用检测用的文档摘要 */
+    /**
+     * 交叉引用检测用的文档摘要。
+     *
+     * @param fileId     文件ID
+     * @param content    文档文本内容（用于匹配引用）
+     * @param categoryNo 事项分类编号（被其他文档引用时匹配）
+     */
     public record DocRef(String fileId, String content, String categoryNo) {}
 }

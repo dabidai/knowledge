@@ -14,20 +14,33 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
-/** 知识图谱控制器 */
+/**
+ * 知识图谱控制器 —— 查询 Neo4j 图数据供前端可视化。
+ *
+ * <p>两种查询模式：
+ * <ul>
+ *   <li>全局概览 —— 部门 → 事项（不传 itemId，带缓存）</li>
+ *   <li>事项脉络 —— 事项 → 文档 → 签阅 → 用户（传 itemId，不缓存）</li>
+ * </ul>
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/graph")
 @RequiredArgsConstructor
 public class GraphController {
 
+    /** Neo4j 驱动 */
     private final Driver neo4jDriver;
 
     /**
-     * 查询知识图谱数据
-     * @param itemId 可选，查询指定事项的图谱；不传则返回全局概览
+     * 查询知识图谱数据。
+     * 不带 itemId 时返回全局概览（缓存 15 分钟），
+     * 带 itemId 时返回该事项的完整脉络（实时查询）。
+     *
+     * @param itemId 可选，事项ID。传入则查询特定事项脉络
+     * @param user   当前认证用户（用于权限过滤）
+     * @return 图谱数据（节点列表 + 边列表）
      */
     @GetMapping
     @org.springframework.cache.annotation.Cacheable(
@@ -39,10 +52,8 @@ public class GraphController {
 
         try (Session session = neo4jDriver.session()) {
             if (itemId != null && !itemId.isBlank()) {
-                // 查询特定事项的完整脉络
                 return ApiResponse.ok(queryItemGraph(session, itemId));
             } else {
-                // 全局概览：部门 → 事项
                 return ApiResponse.ok(queryOverview(session, user));
             }
         } catch (Exception e) {
@@ -51,7 +62,14 @@ public class GraphController {
         }
     }
 
-    /** 查询全局概览 */
+    /**
+     * 查询全局概览 —— 部门及其下属事项的统计信息。
+     * admin 可查看所有部门，普通用户仅能查看本部门及公共区。
+     *
+     * @param session Neo4j 会话
+     * @param user    当前用户
+     * @return 部门→事项 的图数据，最多 100 条
+     */
     private GraphData queryOverview(Session session, User user) {
         String deptName = user.getDepartment().getName();
         String cypher;
@@ -91,14 +109,12 @@ public class GraphController {
             String category = r.get("category").asString("");
             long docCount = r.get("docCount").asLong(0);
 
-            // 部门节点
             String deptId = "dept:" + dept;
             if (nodeIds.add(deptId)) {
                 nodes.add(GraphNode.builder()
                         .id(deptId).label(dept).type("department").build());
             }
 
-            // 事项节点
             if (nodeIds.add(iId)) {
                 String labelText = title.length() > 20 ? title.substring(0, 20) + "..." : title;
                 nodes.add(GraphNode.builder()
@@ -115,7 +131,13 @@ public class GraphController {
         return GraphData.builder().nodes(nodes).edges(edges).build();
     }
 
-    /** 查询特定事项的完整脉络 */
+    /**
+     * 查询特定事项的完整脉络 —— 包含关联的文档、签阅记录、签阅人。
+     *
+     * @param session Neo4j 会话
+     * @param itemId  事项ID
+     * @return 事项为中心的子图数据
+     */
     private GraphData queryItemGraph(Session session, String itemId) {
         String cypher = """
             MATCH (i:Item {item_id: $itemId})
@@ -141,7 +163,7 @@ public class GraphController {
                     .properties(Map.of("category", itemNode.get("category").asString("")))
                     .build());
 
-            // 文档节点
+            // 文档节点 + CONTAINS 关系
             var docs = r.get("docs").asList(org.neo4j.driver.Value::asNode);
             for (var docNode : docs) {
                 String docId = docNode.get("file_id").asString();
@@ -152,7 +174,7 @@ public class GraphController {
                         .source(iId).target(docId).label("CONTAINS").build());
             }
 
-            // 签阅节点
+            // 签阅节点 + HAS_OPINION 关系
             var opinions = r.get("opinions").asList(org.neo4j.driver.Value::asNode);
             for (var opNode : opinions) {
                 String opId = "opinion:" + opNode.elementId();
@@ -168,7 +190,7 @@ public class GraphController {
                         .source(iId).target(opId).label("HAS_OPINION").build());
             }
 
-            // 用户节点
+            // 用户节点 + SIGNED 关系
             var users = r.get("users").asList(org.neo4j.driver.Value::asNode);
             for (var userNode : users) {
                 String username = userNode.get("username").asString("");
@@ -177,7 +199,6 @@ public class GraphController {
                     nodes.add(GraphNode.builder()
                             .id(userId).label(username).type("user").build());
                 }
-                // 找关联的签阅
                 for (var opNode : opinions) {
                     if (opNode.get("signer").asString("").equals(username)) {
                         edges.add(GraphEdge.builder()
@@ -191,29 +212,41 @@ public class GraphController {
         return GraphData.builder().nodes(nodes).edges(edges).build();
     }
 
-    // -- DTO --
+    // -- 图谱响应 DTO --
 
+    /** 图谱数据，包含节点集合和边集合 */
     @Data
     @Builder
     public static class GraphData {
+        /** 节点列表 */
         private List<GraphNode> nodes;
+        /** 边列表 */
         private List<GraphEdge> edges;
     }
 
+    /** 图节点 */
     @Data
     @Builder
     public static class GraphNode {
+        /** 唯一标识 */
         private String id;
+        /** 显示标签 */
         private String label;
+        /** 节点类型：department / item / document / opinion / user */
         private String type;
+        /** 扩展属性（如标题、分类、文档数等） */
         private Map<String, Object> properties;
     }
 
+    /** 图边 */
     @Data
     @Builder
     public static class GraphEdge {
+        /** 源节点ID */
         private String source;
+        /** 目标节点ID */
         private String target;
+        /** 关系标签：OWNS / CONTAINS / HAS_OPINION / SIGNED / REFERENCES */
         private String label;
     }
 }

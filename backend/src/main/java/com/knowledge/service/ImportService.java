@@ -28,17 +28,20 @@ public class ImportService {
     private final MinioService minioService;
     private final ElasticsearchService esService;
     private final AIClient aiClient;
+    /** Neo4j 图谱构建服务 —— 导入过程中同步建图 */
     private final GraphBuildService graphBuildService;
     private final ImportTaskRepository taskRepo;
     private final DocumentRepository docRepo;
-    private final ItemRepository itemRepo;
 
+    /** 文档解压临时目录 */
     @Value("${document.temp-dir}")
     private String tempDir;
 
+    /** 文本分块大小（字符数） */
     @Value("${document.chunk-size}")
     private int chunkSize;
 
+    /** 分块重叠（字符数） */
     @Value("${document.chunk-overlap}")
     private int chunkOverlap;
 

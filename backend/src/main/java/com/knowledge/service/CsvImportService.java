@@ -34,6 +34,7 @@ public class CsvImportService {
     private final DocumentRepository docRepo;
     private final OpinionRepository opinionRepo;
     private final PasswordEncoder passwordEncoder;
+    /** Neo4j 图谱构建服务 —— 导入时同步创建图节点和关系 */
     private final GraphBuildService graphBuildService;
 
     /** 自动检测文件编码并读取为 CSV */
