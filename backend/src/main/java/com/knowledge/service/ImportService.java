@@ -110,18 +110,23 @@ public class ImportService {
         task.setTotalFiles(docFiles.size());
         taskRepo.save(task);
 
-        // 收集文档文本用于交叉引用检测
-        List<GraphBuildService.DocRef> docRefsForRefDetect = new ArrayList<>();
+        // 收集 (fileId → 解析文本) 映射用于后续交叉引用检测
+        Map<String, String> docTextMap = new LinkedHashMap<>();
 
         for (int i = 0; i < docFiles.size(); i++) {
             Path docPath = docFiles.get(i);
             try {
                 String plainText = processDocument(docPath, targetDept, isPublic, batchId);
-                // 记录文档文本用于后续交叉引用检测
-                if (plainText != null && !plainText.isEmpty()) {
-                    // 从 ES 或 DB 获取该文档的 fileId 和 categoryNo
-                    docRefsForRefDetect.add(new GraphBuildService.DocRef(
-                            null, plainText, null, null));
+                // 从 DB 获取刚保存的文档 fileId
+                String fileName = docPath.getFileName().toString();
+                Document matched = docRepo.findAll().stream()
+                        .filter(d -> "matched".equals(d.getStatus())
+                                && d.getFileName() != null
+                                && (d.getFileName().contains(extractBaseName(fileName))
+                                    || fileName.contains(extractBaseName(d.getFileName()))))
+                        .findFirst().orElse(null);
+                if (matched != null && plainText != null && !plainText.isEmpty()) {
+                    docTextMap.put(matched.getFileId(), plainText);
                 }
                 task.setProcessedFiles(i + 1);
                 taskRepo.save(task);
@@ -137,17 +142,16 @@ public class ImportService {
         taskRepo.save(task);
 
         try {
-            // 重新查询已匹配的文档及其事项信息用于引用检测
-            List<GraphBuildService.DocRef> docRefsWithMeta = docRepo.findAll().stream()
-                    .filter(d -> d.getTextLength() != null && d.getTextLength() > 0)
-                    .map(d -> {
-                        String categoryNo = d.getItem() != null ? d.getItem().getCategoryNo() : null;
-                        return new GraphBuildService.DocRef(
-                                d.getFileId(), "", categoryNo, null);
-                    })
-                    .toList();
-            if (!docRefsWithMeta.isEmpty()) {
-                graphBuildService.detectCrossReferences(docRefsWithMeta);
+            // 构建用于引用检测的 DocRef 列表（合并文本内容 + 事项分类编号）
+            List<GraphBuildService.DocRef> docRefs = new ArrayList<>();
+            for (Document d : docRepo.findAll()) {
+                if (d.getTextLength() == null || d.getTextLength() == 0) continue;
+                String content = docTextMap.getOrDefault(d.getFileId(), "");
+                String categoryNo = d.getItem() != null ? d.getItem().getCategoryNo() : null;
+                docRefs.add(new GraphBuildService.DocRef(d.getFileId(), content, categoryNo));
+            }
+            if (!docRefs.isEmpty()) {
+                graphBuildService.detectCrossReferences(docRefs);
             }
         } catch (Exception e) {
             log.warn("交叉引用检测失败: {}", e.getMessage());

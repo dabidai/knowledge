@@ -187,11 +187,11 @@ public class GraphBuildService {
         int refCount = 0;
 
         for (DocRef source : allDocs) {
-            if (source.content() == null || source.categoryNos() == null) continue;
+            if (source.content() == null || source.content().isEmpty()) continue;
 
             for (DocRef target : allDocs) {
                 if (source.fileId().equals(target.fileId())) continue;
-                if (target.categoryNo() == null) continue;
+                if (target.categoryNo() == null || target.categoryNo().isEmpty()) continue;
 
                 // 检查 source 的文本内容是否包含 target 的分类编号
                 if (source.content().contains(target.categoryNo())) {
@@ -206,10 +206,5 @@ public class GraphBuildService {
     }
 
     /** 交叉引用检测用的文档摘要 */
-    public record DocRef(String fileId, String content, String categoryNo,
-                         List<String> categoryNos) {
-        public DocRef(String fileId, String content, String categoryNo) {
-            this(fileId, content, categoryNo, null);
-        }
-    }
+    public record DocRef(String fileId, String content, String categoryNo) {}
 }
