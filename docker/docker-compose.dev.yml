@@ -1,0 +1,84 @@
+# 仅开发环境基础设施 —— 后端/前端/AI 在宿主机原生运行
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kb-postgres
+    environment:
+      POSTGRES_DB: knowledge
+      POSTGRES_USER: kb_user
+      POSTGRES_PASSWORD: kb_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    mem_limit: 2g
+
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+    mem_limit: 512m
+
+  minio:
+    image: minio/minio:latest
+    container_name: kb-minio
+    environment:
+      MINIO_ROOT_USER: kb_admin
+      MINIO_ROOT_PASSWORD: kb_pass
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./data/minio:/data
+    restart: unless-stopped
+    mem_limit: 1g
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: kb-es
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - ./data/es:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    mem_limit: 4g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: kb-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/neo4j_pass
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1g
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - ./data/neo4j/data:/data
+    restart: unless-stopped
+    mem_limit: 2g
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kb-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama/models:/root/.ollama
+    restart: unless-stopped
+    mem_limit: 16g
