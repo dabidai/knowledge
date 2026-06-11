@@ -1,0 +1,12 @@
+FROM eclipse-temurin:17-jre-alpine
+
+WORKDIR /app
+
+# 直接复制本地已编译好的 JAR（需先在 Windows 上执行 mvn package）
+COPY target/*.jar app.jar
+
+ENV JAVA_OPTS="-Xms2g -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+
+EXPOSE 8080
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
