@@ -13,6 +13,9 @@
     <el-container>
       <el-aside width="200px" v-if="authStore.isLoggedIn">
         <el-menu :router="true" :default-active="route.path" class="app-menu">
+          <el-menu-item index="/chat">
+            <el-icon><ChatDotRound /></el-icon> 智能问答
+          </el-menu-item>
           <el-menu-item index="/search">
             <el-icon><Search /></el-icon> 知识检索
           </el-menu-item>

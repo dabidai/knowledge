@@ -120,9 +120,12 @@ async function handleSend() {
   await scrollBottom()
 
   try {
-    // 构建对话历史（取最近 10 轮）
+    // 构建对话历史（取最近 10 轮，过滤错误回复）
     const history = messages.value
-      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .filter(m => {
+        if (m.role === 'assistant' && m.content.startsWith('抱歉')) return false
+        return m.role === 'user' || m.role === 'assistant'
+      })
       .slice(-20)
       .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
 

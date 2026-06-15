@@ -22,3 +22,8 @@ docker/ollama/
 # 错误日志
 error.txt
 docker/error.txt
+ai-service/ai-models/
+
+*.zip
+*.txt
+*.csv

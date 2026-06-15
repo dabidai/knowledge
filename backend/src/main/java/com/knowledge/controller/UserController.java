@@ -26,6 +26,7 @@ public class UserController {
 
     /** 初始化管理员账号（系统首次使用） */
     @PostMapping("/init")
+    @PreAuthorize("permitAll()")
     public ApiResponse<Map<String, String>> initAdmin(@RequestBody Map<String, String> body) {
         if (userRepo.count() > 0) {
             return ApiResponse.error(400, "系统已初始化，请使用管理员账号登录后通过 /api/users 管理用户");

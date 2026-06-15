@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # ============ 配置 ============
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:14b-q4_K_M")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b-q4_K_M")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
 
 # ============ 全局模型实例 ============

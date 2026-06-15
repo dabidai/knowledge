@@ -8,6 +8,12 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
+  # HTTP 客户端超时（RestClient 调用 AI 服务用）
+  http:
+    client:
+      connect-timeout: 10s
+      read-timeout: 5m
+
   # 数据源
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:5432/knowledge
@@ -61,7 +67,7 @@ elasticsearch:
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
   access-key: ${MINIO_USER:kb_admin}
-  secret-key: ${MINIO_PASSWORD:kb_pass}
+  secret-key: ${MINIO_PASSWORD:kb_pass123}
   bucket-docs: knowledge-docs
   bucket-markdown: knowledge-md
   # 预签名 URL 有效期 (秒)

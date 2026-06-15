@@ -1,4 +1,11 @@
 # 仅开发环境基础设施 —— 后端/前端/AI 在宿主机原生运行
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  es_data:
+  neo4j_data:
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -10,7 +17,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     mem_limit: 2g
 
@@ -21,7 +28,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - ./data/redis:/data
+      - redis_data:/data
     restart: unless-stopped
     mem_limit: 512m
 
@@ -30,27 +37,28 @@ services:
     container_name: kb-minio
     environment:
       MINIO_ROOT_USER: kb_admin
-      MINIO_ROOT_PASSWORD: kb_pass
+      MINIO_ROOT_PASSWORD: kb_pass123
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./data/minio:/data
+      - minio_data:/data
     restart: unless-stopped
     mem_limit: 1g
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    build: ./config/es
+    image: kb-es:8.15.0-ik
     container_name: kb-es
     environment:
       - discovery.type=single-node
-      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
       - xpack.security.enabled=false
     ports:
       - "9200:9200"
     volumes:
-      - ./data/es:/usr/share/elasticsearch/data
+      - es_data:/usr/share/elasticsearch/data
     restart: unless-stopped
     mem_limit: 4g
     ulimits:
@@ -69,13 +77,17 @@ services:
       - "7474:7474"
       - "7687:7687"
     volumes:
-      - ./data/neo4j/data:/data
+      - neo4j_data:/data
     restart: unless-stopped
     mem_limit: 2g
 
   ollama:
     image: ollama/ollama:latest
     container_name: kb-ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=5m
     ports:
       - "11434:11434"
     volumes:

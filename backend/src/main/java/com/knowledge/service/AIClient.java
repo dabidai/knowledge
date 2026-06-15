@@ -5,12 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -19,14 +19,17 @@ import java.util.Map;
 @Service
 public class AIClient {
 
-    private final HttpClient httpClient;
+    private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
     @Value("${ai-service.url}")
     private String aiServiceUrl;
 
     public AIClient(ObjectMapper objectMapper) {
-        this.httpClient = HttpClient.newHttpClient();
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(10));
+        factory.setReadTimeout(Duration.ofMinutes(5));
+        this.restClient = RestClient.builder().requestFactory(factory).build();
         this.objectMapper = objectMapper;
     }
 
@@ -35,18 +38,14 @@ public class AIClient {
         try {
             EmbedRequest req = new EmbedRequest(text);
             String json = objectMapper.writeValueAsString(req);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(aiServiceUrl + "/embed"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
-
-            EmbedResponse resp = objectMapper.readValue(response.body(), EmbedResponse.class);
-            return resp.embedding;
+            log.debug("Embed 请求: {}", json);
+            EmbedResponse resp = restClient.post()
+                    .uri(aiServiceUrl + "/embed")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(json)
+                    .retrieve()
+                    .body(EmbedResponse.class);
+            return resp != null ? resp.embedding : new float[0];
         } catch (Exception e) {
             log.error("Embedding 生成失败", e);
             return new float[0];
@@ -58,50 +57,33 @@ public class AIClient {
         try {
             AskRequest req = new AskRequest(question, contexts);
             String json = objectMapper.writeValueAsString(req);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(aiServiceUrl + "/ask"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .timeout(java.time.Duration.ofMinutes(3))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
-
-            AskResponse resp = objectMapper.readValue(response.body(), AskResponse.class);
-            return resp.answer;
+            AskResponse resp = restClient.post()
+                    .uri(aiServiceUrl + "/ask")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(json)
+                    .retrieve()
+                    .body(AskResponse.class);
+            return resp != null ? resp.answer : "抱歉，AI 服务暂时不可用。";
         } catch (Exception e) {
             log.error("RAG 问答失败", e);
             return "抱歉，AI 服务暂时不可用。";
         }
     }
 
-    /**
-     * 智能体对话 —— 支持多轮历史 + RAG 上下文。
-     *
-     * @param question 当前问题
-     * @param contexts 检索到的文档片段
-     * @param history  对话历史列表 [{role: "user"|"assistant", content: "..."}]
-     */
+    /** 智能体对话 */
     public String chat(String question, List<String> contexts,
                        List<Map<String, String>> history) {
         try {
             ChatRequest req = new ChatRequest(question, contexts, history);
             String json = objectMapper.writeValueAsString(req);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(aiServiceUrl + "/chat"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .timeout(java.time.Duration.ofMinutes(3))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
-
-            AskResponse resp = objectMapper.readValue(response.body(), AskResponse.class);
-            return resp.answer;
+            log.debug("Chat 请求: {}", json);
+            AskResponse resp = restClient.post()
+                    .uri(aiServiceUrl + "/chat")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(json)
+                    .retrieve()
+                    .body(AskResponse.class);
+            return resp != null ? resp.answer : "抱歉，AI 服务暂时不可用。";
         } catch (Exception e) {
             log.error("智能体对话失败", e);
             return "抱歉，AI 服务暂时不可用。";
@@ -111,13 +93,11 @@ public class AIClient {
     /** 健康检查 */
     public boolean health() {
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(aiServiceUrl + "/health"))
-                    .GET()
-                    .build();
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200;
+            String resp = restClient.get()
+                    .uri(aiServiceUrl + "/health")
+                    .retrieve()
+                    .body(String.class);
+            return resp != null && resp.contains("UP");
         } catch (Exception e) {
             return false;
         }
@@ -128,6 +108,7 @@ public class AIClient {
     @Data
     public static class EmbedRequest {
         private String text;
+        public EmbedRequest() {}
         public EmbedRequest(String text) { this.text = text; }
     }
 
@@ -141,6 +122,7 @@ public class AIClient {
     public static class AskRequest {
         private String question;
         private List<String> contexts;
+        public AskRequest() {}
         public AskRequest(String question, List<String> contexts) {
             this.question = question;
             this.contexts = contexts;
@@ -158,6 +140,7 @@ public class AIClient {
         private List<String> contexts;
         @JsonProperty("history")
         private List<Map<String, String>> history;
+        public ChatRequest() {}
         public ChatRequest(String question, List<String> contexts,
                            List<Map<String, String>> history) {
             this.question = question;

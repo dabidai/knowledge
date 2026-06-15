@@ -42,6 +42,7 @@ public class SecurityConfig {
                 // 公开端点
                 .requestMatchers("/api/auth/login").permitAll()
                 .requestMatchers("/api/health").permitAll()
+                .requestMatchers("/api/users/init").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 // admin 端点
                 .requestMatchers("/api/users/**").hasRole("ADMIN")

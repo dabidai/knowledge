@@ -71,6 +71,20 @@ public class ElasticsearchService {
                                         String deptName, int topK,
                                         String category, String year, String itemType) throws IOException {
 
+        // 检查索引是否存在
+        try {
+            boolean exists = esClient.indices()
+                    .exists(ExistsRequest.of(r -> r.index(indexName)))
+                    .value();
+            if (!exists) {
+                log.warn("ES 索引 {} 不存在，返回空结果", indexName);
+                return Collections.emptyList();
+            }
+        } catch (IOException e) {
+            log.error("检查 ES 索引失败", e);
+            return Collections.emptyList();
+        }
+
         // BM25 子查询
         Query bm25Query = Query.of(q -> q
                 .bool(BoolQuery.of(b -> {
