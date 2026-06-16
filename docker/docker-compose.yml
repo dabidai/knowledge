@@ -163,6 +163,9 @@ services:
       MINIO_USER: ${MINIO_USER:-kb_admin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-kb_pass}
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-string-at-least-32-chars}
+      IMPORT_ROOT_DIR: /data/documents
+    volumes:
+      - ./imports:/data/documents
     depends_on:
       - postgres
       - redis

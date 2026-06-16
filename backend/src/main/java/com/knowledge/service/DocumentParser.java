@@ -37,6 +37,8 @@ public class DocumentParser {
             return parsePdf(filePath);
         } else if (fileName.endsWith(".ofd")) {
             return parseOfd(filePath);
+        } else if (fileName.endsWith(".wps")) {
+            return parseWps(filePath);
         } else {
             throw new IllegalArgumentException("不支持的文件格式: " + fileName);
         }
@@ -130,6 +132,56 @@ public class DocumentParser {
         } catch (Exception e) {
             log.error("OFD 解析失败: {}", filePath, e);
             return "[OFD 解析异常: " + e.getMessage() + "] " + filePath.getFileName();
+        }
+    }
+
+    /**
+     * 解析 WPS 文字文档
+     * 新版 WPS (.wps) 基于 OOXML（即 XML 的 ZIP 压缩包），结构与 DOCX 类似。
+     * 尝试：1. 按 DOCX 方式读取  2. 按 ZIP+XML 提取文本
+     */
+    private String parseWps(Path filePath) throws IOException {
+        // 先尝试以 DOCX 方式打开（新版 WPS 兼容 OOXML）
+        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
+             XWPFDocument doc = new XWPFDocument(is)) {
+            StringBuilder sb = new StringBuilder();
+            doc.getParagraphs().forEach(p -> sb.append(p.getText()).append("\n"));
+            doc.getTables().forEach(table -> {
+                sb.append("\n[表格]\n");
+                table.getRows().forEach(row -> {
+                    row.getTableCells().forEach(cell ->
+                            sb.append(cell.getText()).append("\t"));
+                    sb.append("\n");
+                });
+            });
+            if (!sb.isEmpty()) return sb.toString();
+        } catch (Exception ignored) {
+            // 不是 OOXML 格式，尝试 ZIP+XML 方式
+        }
+
+        // 回退：当作 ZIP 压缩包，提取所有 XML 中的文本
+        try (ZipFile zip = new ZipFile(filePath.toFile())) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            StringBuilder sb = new StringBuilder();
+
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.getName().endsWith(".xml") && !entry.isDirectory()) {
+                    try (InputStream is = zip.getInputStream(entry)) {
+                        Document doc = builder.parse(is);
+                        extractTextFromXml(doc.getDocumentElement(), sb);
+                    }
+                }
+            }
+
+            if (!sb.isEmpty()) return sb.toString().trim();
+            log.warn("WPS 文件未能提取到文本: {}", filePath.getFileName());
+            return "[WPS 文档 — 未能提取文本内容] " + filePath.getFileName();
+        } catch (Exception e) {
+            log.error("WPS 解析失败: {}", filePath, e);
+            return "[WPS 解析异常: " + e.getMessage() + "] " + filePath.getFileName();
         }
     }
 

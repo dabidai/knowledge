@@ -6,6 +6,7 @@ import com.knowledge.entity.ImportTask;
 import com.knowledge.repository.ImportTaskRepository;
 import com.knowledge.service.ImportService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -29,14 +30,53 @@ public class ImportController {
         @org.springframework.cache.annotation.CacheEvict(value = "graphOverview", allEntries = true),
         @org.springframework.cache.annotation.CacheEvict(value = "importTasks", allEntries = true)
     })
-    public ApiResponse<Map<String, String>> upload(
+    public ResponseEntity<ApiResponse<Map<String, String>>> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "target", defaultValue = "public") String target) {
         try {
             String batchId = importService.importArchive(file, target);
-            return ApiResponse.ok("导入任务已创建", Map.of("batchId", batchId));
+            return ResponseEntity.ok(ApiResponse.ok("导入任务已创建", Map.of("batchId", batchId)));
         } catch (Exception e) {
-            return ApiResponse.error(500, "导入失败: " + e.getMessage());
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error(500, "导入失败: " + e.getMessage()));
+        }
+    }
+
+    /** 从服务器本地路径导入压缩包（跳过上传，适合大文件） */
+    @PostMapping("/from-path")
+    public ResponseEntity<ApiResponse<Map<String, String>>> importFromPath(
+            @RequestBody Map<String, String> body) {
+        String path = body.get("path");
+        String target = body.getOrDefault("target", "public");
+        if (path == null || path.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(400, "路径不能为空"));
+        }
+        try {
+            String batchId = importService.importFromPath(path, target);
+            return ResponseEntity.ok(ApiResponse.ok("导入任务已创建", Map.of("batchId", batchId)));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error(500, "导入失败: " + e.getMessage()));
+        }
+    }
+
+    /** 从服务器目录扫描导入所有文档 */
+    @PostMapping("/from-dir")
+    public ResponseEntity<ApiResponse<Map<String, String>>> importFromDir(
+            @RequestBody Map<String, String> body) {
+        String path = body.get("path");
+        String target = body.getOrDefault("target", "public");
+        if (path == null || path.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(400, "路径不能为空"));
+        }
+        try {
+            String batchId = importService.importFromDir(path, target);
+            return ResponseEntity.ok(ApiResponse.ok("导入任务已创建", Map.of("batchId", batchId)));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error(500, "导入失败: " + e.getMessage()));
         }
     }
 

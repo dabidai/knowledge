@@ -3,43 +3,65 @@
     <el-card>
       <template #header><strong>📦 文档导入</strong></template>
 
-      <el-form label-width="100px">
-        <el-form-item label="目标位置">
-          <el-radio-group v-model="target">
-            <el-radio value="public">公共区</el-radio>
-            <el-radio value="信息技术部">信息技术部</el-radio>
-            <el-radio value="办公室">办公室</el-radio>
-            <el-radio value="研究室">研究室</el-radio>
-          </el-radio-group>
-        </el-form-item>
+      <el-tabs v-model="mode" type="border-card">
+        <!-- ========== 上传文件 Tab ========== -->
+        <el-tab-pane label="上传文件" name="upload">
+          <el-form label-width="100px">
+            <el-form-item label="目标位置">
+              <el-radio-group v-model="target">
+                <el-radio value="public">公共区</el-radio>
+                <el-radio value="信息技术部">信息技术部</el-radio>
+                <el-radio value="办公室">办公室</el-radio>
+                <el-radio value="研究室">研究室</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="选择文件">
+              <el-upload ref="uploadRef" drag :auto-upload="false" :on-change="handleFileChange"
+                :limit="1" accept=".zip,.7z,.tar,.tar.gz,.tgz,.gz">
+                <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+                <div class="el-upload__text">拖拽压缩包到此处，或<em>点击选择</em></div>
+              </el-upload>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="uploading" @click="handleUpload"
+                :disabled="!file"><el-icon><Upload /></el-icon> 开始导入</el-button>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
 
-        <el-form-item label="选择文件">
-          <el-upload
-            ref="uploadRef"
-            drag
-            :auto-upload="false"
-            :on-change="handleFileChange"
-            :limit="1"
-            accept=".zip,.rar,.7z"
-          >
-            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-            <div class="el-upload__text">拖拽压缩包到此处，或<em>点击选择</em></div>
-            <template #tip>
-              <div class="el-upload__tip">
-                支持 zip/rar/7z 格式。压缩包内应包含文档文件 (doc/docx/pdf/ofd) 及
-                可选的元数据文件 (item.csv / file_index.csv / item_with_opinions.csv)
+        <!-- ========== 服务器路径 Tab ========== -->
+        <el-tab-pane label="服务器路径" name="path">
+          <el-form label-width="100px">
+            <el-form-item label="目标位置">
+              <el-radio-group v-model="target">
+                <el-radio value="public">公共区</el-radio>
+                <el-radio value="信息技术部">信息技术部</el-radio>
+                <el-radio value="办公室">办公室</el-radio>
+                <el-radio value="研究室">研究室</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="导入模式">
+              <el-radio-group v-model="pathMode">
+                <el-radio value="file">压缩包文件</el-radio>
+                <el-radio value="dir">扫描文件夹</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="服务器路径">
+              <el-input v-model="serverPath" :placeholder="pathMode === 'file'
+                ? '例如: F:/code/knowledge/input/test.zip'
+                : '例如: F:/code/knowledge/input/docs/'" />
+              <div class="el-upload__tip" style="margin-top:4px">
+                <template v-if="pathMode === 'file'">输入压缩包路径（zip/7z/tar），支持大文件</template>
+                <template v-else>输入文件夹路径，自动扫描目录下所有文档（pdf/doc/docx/ofd/wps）</template>
               </div>
-            </template>
-          </el-upload>
-        </el-form-item>
-
-        <el-form-item>
-          <el-button type="primary" :loading="uploading" @click="handleUpload"
-                     :disabled="!file">
-            <el-icon><Upload /></el-icon> 开始导入
-          </el-button>
-        </el-form-item>
-      </el-form>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="uploading" @click="handlePathImport"
+                :disabled="!serverPath.trim()"><el-icon><Upload /></el-icon> 开始导入</el-button>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
+      </el-tabs>
 
       <!-- 导入进度 -->
       <div v-if="batchId" class="progress-area">
@@ -59,9 +81,12 @@ import { ref, reactive, computed } from 'vue'
 import { importApi } from '@/api'
 import { ElMessage } from 'element-plus'
 
+const mode = ref('upload')
+const pathMode = ref('file')
 const target = ref('public')
 const uploading = ref(false)
 const file = ref<File | null>(null)
+const serverPath = ref('')
 const batchId = ref('')
 const progressLoading = ref(false)
 const progress = reactive({
@@ -87,6 +112,23 @@ async function handleUpload() {
     formData.append('target', target.value)
 
     const res = await importApi.upload(formData)
+    batchId.value = res.data.data.batchId
+    ElMessage.success('导入任务已创建')
+    pollProgress()
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function handlePathImport() {
+  if (!serverPath.value.trim()) return
+  uploading.value = true
+  try {
+    const api = pathMode.value === 'dir' ? importApi.fromDir : importApi.fromPath
+    const res = await api({
+      path: serverPath.value.trim(),
+      target: target.value,
+    })
     batchId.value = res.data.data.batchId
     ElMessage.success('导入任务已创建')
     pollProgress()

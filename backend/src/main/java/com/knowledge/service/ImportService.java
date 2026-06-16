@@ -39,6 +39,10 @@ public class ImportService {
     @Value("${document.work-dir}")
     private String workDir;
 
+    /** 服务器路径导入允许的根目录 */
+    @Value("${document.import-root-dir}")
+    private String importRootDir;
+
     /** 文本分块大小（字符数） */
     @Value("${document.chunk-size}")
     private int chunkSize;
@@ -48,12 +52,168 @@ public class ImportService {
     private int chunkOverlap;
 
     /**
-     * 导入压缩包（zip/rar/7z）
+     * 导入压缩包（浏览器 HTTP 上传）
      * @param file      上传的压缩包
      * @param targetDept 目标部门 或 "public"
      */
     @Transactional
     public String importArchive(MultipartFile file, String targetDept) throws Exception {
+        // 先存为临时文件，复用 doImport 逻辑
+        Path tempDir = Path.of(workDir, "uploads");
+        Files.createDirectories(tempDir);
+        Path temp = tempDir.resolve(UUID.randomUUID().toString().replace("-", ""));
+        Files.copy(file.getInputStream(), temp, StandardCopyOption.REPLACE_EXISTING);
+        try {
+            return doImport(temp, targetDept, file.getOriginalFilename());
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
+    /**
+     * 导入压缩包（服务器本地路径）
+     * @param pathStr    服务器上的压缩包绝对路径
+     * @param targetDept 目标部门 或 "public"
+     */
+    @Transactional
+    public String importFromPath(String pathStr, String targetDept) throws Exception {
+        Path path = Path.of(pathStr).toAbsolutePath().normalize();
+        Path root = Path.of(importRootDir).toAbsolutePath().normalize();
+
+        if (!path.startsWith(root)) {
+            throw new IllegalArgumentException("文件路径不在允许的根目录下: " + root);
+        }
+        if (!Files.isRegularFile(path)) {
+            throw new IllegalArgumentException("文件不存在或不是普通文件: " + path);
+        }
+
+        return doImport(path, targetDept, path.getFileName().toString());
+    }
+
+    /**
+     * 导入服务器目录（扫描文件夹下所有文档）
+     * @param dirPathStr 服务器上的目录绝对路径
+     * @param targetDept 目标部门 或 "public"
+     */
+    @Transactional
+    public String importFromDir(String dirPathStr, String targetDept) throws Exception {
+        Path dirPath = Path.of(dirPathStr).toAbsolutePath().normalize();
+        Path root = Path.of(importRootDir).toAbsolutePath().normalize();
+
+        if (!dirPath.startsWith(root)) {
+            throw new IllegalArgumentException("目录路径不在允许的根目录下: " + root);
+        }
+        if (!Files.isDirectory(dirPath)) {
+            throw new IllegalArgumentException("路径不存在或不是目录: " + dirPath);
+        }
+
+        String batchId = UUID.randomUUID().toString().replace("-", "");
+        boolean isPublic = "public".equals(targetDept);
+
+        graphBuildService.ensureConstraints();
+
+        // 扫描目录下所有文档文件
+        List<Path> docFiles = new ArrayList<>();
+        Map<String, Path> csvFiles = new HashMap<>();
+        try (var stream = Files.walk(dirPath)) {
+            for (Path p : stream.filter(Files::isRegularFile).toList()) {
+                String name = p.getFileName().toString().toLowerCase();
+                if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                    csvFiles.putIfAbsent("item", p);
+                } else if (name.startsWith("file_index") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                    csvFiles.putIfAbsent("file_index", p);
+                } else if (name.startsWith("item_with_opinions") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                    csvFiles.putIfAbsent("opinions", p);
+                } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                    csvFiles.putIfAbsent("user", p);
+                } else if (name.endsWith(".doc") || name.endsWith(".docx")
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
+                    docFiles.add(p);
+                }
+            }
+        }
+
+        if (docFiles.isEmpty()) {
+            throw new IllegalArgumentException("目录中未找到支持的文档文件: " + dirPath);
+        }
+
+        // 创建导入任务
+        ImportTask task = ImportTask.builder()
+                .batchId(batchId)
+                .archiveName("目录: " + dirPath.getFileName())
+                .targetDept(targetDept)
+                .status("metadata_parsed")
+                .totalFiles(docFiles.size())
+                .build();
+        taskRepo.save(task);
+
+        // 解析元数据
+        if (csvFiles.containsKey("item")) {
+            csvImportService.importItemCsv(csvFiles.get("item"), targetDept, isPublic, batchId);
+        }
+        if (csvFiles.containsKey("file_index")) {
+            csvImportService.importFileIndexCsv(csvFiles.get("file_index"), targetDept, isPublic, batchId);
+        }
+        if (csvFiles.containsKey("opinions")) {
+            csvImportService.importOpinionsCsv(csvFiles.get("opinions"), batchId);
+        }
+        if (csvFiles.containsKey("user")) {
+            csvImportService.importUserCsv(csvFiles.get("user"));
+        }
+
+        // 解析文档
+        task.setStatus("parsing");
+        taskRepo.save(task);
+
+        Map<String, String> docTextMap = new LinkedHashMap<>();
+        for (int i = 0; i < docFiles.size(); i++) {
+            Path docPath = docFiles.get(i);
+            try {
+                String plainText = processDocument(docPath, targetDept, isPublic, batchId);
+                String fileName = docPath.getFileName().toString();
+                Document matched = docRepo.findAll().stream()
+                        .filter(d -> "matched".equals(d.getStatus())
+                                && d.getFileName() != null
+                                && (d.getFileName().contains(extractBaseName(fileName))
+                                    || fileName.contains(extractBaseName(d.getFileName()))))
+                        .findFirst().orElse(null);
+                if (matched != null && plainText != null && !plainText.isEmpty()) {
+                    docTextMap.put(matched.getFileId(), plainText);
+                }
+                task.setProcessedFiles(i + 1);
+                taskRepo.save(task);
+            } catch (Exception e) {
+                log.error("文档解析失败: {}", docPath.getFileName(), e);
+                appendError(task, docPath.getFileName() + ": " + e.getMessage());
+            }
+        }
+
+        // 交叉引用检测
+        task.setStatus("complete");
+        task.setCompletedAt(java.time.LocalDateTime.now());
+        taskRepo.save(task);
+
+        try {
+            List<GraphBuildService.DocRef> docRefs = new ArrayList<>();
+            for (Document d : docRepo.findAll()) {
+                if (d.getTextLength() == null || d.getTextLength() == 0) continue;
+                String content = docTextMap.getOrDefault(d.getFileId(), "");
+                String categoryNo = d.getItem() != null ? d.getItem().getCategoryNo() : null;
+                docRefs.add(new GraphBuildService.DocRef(d.getFileId(), content, categoryNo));
+            }
+            if (!docRefs.isEmpty()) {
+                graphBuildService.detectCrossReferences(docRefs);
+            }
+        } catch (Exception e) {
+            log.warn("交叉引用检测失败: {}", e.getMessage());
+        }
+
+        log.info("目录导入完成: batchId={}, 文件数={}", batchId, docFiles.size());
+        return batchId;
+    }
+
+    /** 核心导入逻辑 —— 解压、解析元数据、解析文档、建图 */
+    private String doImport(Path archivePath, String targetDept, String archiveName) throws Exception {
         String batchId = UUID.randomUUID().toString().replace("-", "");
         boolean isPublic = "public".equals(targetDept);
 
@@ -63,16 +223,18 @@ public class ImportService {
         // 2. 创建导入任务
         ImportTask task = ImportTask.builder()
                 .batchId(batchId)
-                .archiveName(file.getOriginalFilename())
+                .archiveName(archiveName)
                 .targetDept(targetDept)
                 .status("pending")
                 .build();
         taskRepo.save(task);
 
-        // 2. 解压至工作目录（持久化，支持断点续传）
+        // 3. 解压至工作目录（持久化，支持断点续传）
         Path extractDir = Path.of(workDir, batchId);
         Files.createDirectories(extractDir);
-        extractArchive(file.getInputStream(), extractDir);
+        try (InputStream is = Files.newInputStream(archivePath)) {
+            extractArchive(is, extractDir);
+        }
         task.setStatus("metadata_parsed");
 
         // 3. 分类文件
@@ -90,7 +252,7 @@ public class ImportService {
                 } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.put("user", p);
                 } else if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
                     docFiles.add(p);
                 }
             }
@@ -209,7 +371,7 @@ public class ImportService {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
                 if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
                     String baseName = extractBaseName(name);
                     // 跳过已处理的文件
                     if (!processedNames.contains(p.getFileName().toString())
@@ -346,21 +508,115 @@ public class ImportService {
         return plainText;
     }
 
-    /** 解压归档文件（支持 zip） */
+    /** 解压归档文件（支持 zip / 7z / tar / tar.gz / rar） */
     private void extractArchive(InputStream inputStream, Path targetDir) throws Exception {
+        // 读取前 512 字节检测格式（TAR 需要 512 字节块）
+        byte[] header = new byte[512];
+        int totalRead = 0;
+        while (totalRead < header.length) {
+            int n = inputStream.read(header, totalRead, header.length - totalRead);
+            if (n < 0) break;
+            totalRead += n;
+        }
+        if (totalRead < 4) throw new IllegalArgumentException("无法识别压缩格式");
+
+        // 封装：把 header + 剩余流拼回去给解析器
+        java.io.SequenceInputStream fullStream = new java.io.SequenceInputStream(
+                new java.io.ByteArrayInputStream(header, 0, totalRead), inputStream);
+
+        if (is7z(header)) {
+            extract7z(fullStream, targetDir);
+        } else if (isRar(header)) {
+            extractRar(fullStream, targetDir);
+        } else if (isTar(header)) {
+            extractTar(fullStream, targetDir);
+        } else {
+            extractZip(fullStream, targetDir);
+        }
+    }
+
+    private static boolean is7z(byte[] header) {
+        return header[0] == 0x37 && header[1] == 0x7A
+            && header[2] == (byte)0xBC && header[3] == (byte)0xAF;
+    }
+
+    private static boolean isRar(byte[] header) {
+        return header[0] == 0x52 && header[1] == 0x61
+            && header[2] == 0x72 && header[3] == 0x21;
+    }
+
+    private static boolean isTar(byte[] header) {
+        // POSIX/GNU TAR: 偏移 257 处有 "ustar" 魔数
+        if (header.length >= 263) {
+            return header[257] == 'u' && header[258] == 's'
+                && header[259] == 't' && header[260] == 'a'
+                && header[261] == 'r';
+        }
+        return false;
+    }
+
+    private void extractZip(InputStream inputStream, Path targetDir) throws Exception {
         try (var archive = new org.apache.commons.compress.archivers.zip.ZipArchiveInputStream(inputStream)) {
             org.apache.commons.compress.archivers.ArchiveEntry entry;
             while ((entry = archive.getNextEntry()) != null) {
                 if (!archive.canReadEntryData(entry)) continue;
-                Path outPath = targetDir.resolve(entry.getName()).normalize();
-                if (!outPath.startsWith(targetDir)) continue; // 防Zip Slip
-                if (entry.isDirectory()) {
-                    Files.createDirectories(outPath);
-                } else {
-                    Files.createDirectories(outPath.getParent());
-                    Files.copy(archive, outPath, StandardCopyOption.REPLACE_EXISTING);
+                writeEntry(targetDir, archive, entry.getName(), entry.isDirectory());
+            }
+        }
+    }
+
+    private void extract7z(InputStream inputStream, Path targetDir) throws Exception {
+        // SevenZFile 需要 SeekableByteChannel，先写临时文件
+        Path temp = Files.createTempFile("kb-extract", ".7z");
+        try {
+            Files.copy(inputStream, temp, StandardCopyOption.REPLACE_EXISTING);
+            try (var szFile = new org.apache.commons.compress.archivers.sevenz.SevenZFile.Builder()
+                    .setFile(temp.toFile())
+                    .get()) {
+                org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry entry;
+                while ((entry = szFile.getNextEntry()) != null) {
+                    if (entry.isDirectory()) {
+                        writeEntry(targetDir, null, entry.getName(), true);
+                    } else {
+                        Path outPath = targetDir.resolve(entry.getName()).normalize();
+                        if (!outPath.startsWith(targetDir)) continue;
+                        Files.createDirectories(outPath.getParent());
+                        // 读取到 byte[] 再写
+                        byte[] content = new byte[(int) entry.getSize()];
+                        szFile.read(content);
+                        Files.write(outPath, content);
+                    }
                 }
             }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
+    private void extractTar(InputStream inputStream, Path targetDir) throws Exception {
+        // TarArchiveInputStream 自动处理 .tar / .tar.gz / .tar.bz2
+        try (var archive = new org.apache.commons.compress.archivers.tar.TarArchiveInputStream(inputStream)) {
+            org.apache.commons.compress.archivers.ArchiveEntry entry;
+            while ((entry = archive.getNextEntry()) != null) {
+                if (!archive.canReadEntryData(entry)) continue;
+                writeEntry(targetDir, archive, entry.getName(), entry.isDirectory());
+            }
+        }
+    }
+
+    private void extractRar(InputStream inputStream, Path targetDir) throws Exception {
+        // RAR 是专有格式，Java 生态无成熟的 RAR5 免费库
+        throw new IllegalArgumentException("不支持 RAR 格式，请用 WinRAR 或 7-Zip 解压后重新打包为 ZIP 上传");
+    }
+
+    private void writeEntry(Path targetDir, InputStream source, String name, boolean isDir) throws Exception {
+        Path outPath = targetDir.resolve(name).normalize();
+        if (!outPath.startsWith(targetDir)) return; // 防 Zip Slip
+        if (isDir) {
+            Files.createDirectories(outPath);
+        } else {
+            Files.createDirectories(outPath.getParent());
+            Files.copy(source, outPath, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

@@ -87,6 +87,8 @@ neo4j:
 document:
   # 导入工作目录（持久化，用于断点续传）
   work-dir: data/import
+  # 服务器路径导入允许的根目录
+  import-root-dir: ${IMPORT_ROOT_DIR:F:/code/knowledge/input}
   # 文本分块大小 (字符数)
   chunk-size: 512
   # 分块重叠 (字符数)

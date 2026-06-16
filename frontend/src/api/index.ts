@@ -53,6 +53,10 @@ export const importApi = {
     http.post('/import/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  fromPath: (data: { path: string; target: string }) =>
+    http.post('/import/from-path', data),
+  fromDir: (data: { path: string; target: string }) =>
+    http.post('/import/from-dir', data),
   progress: (batchId: string) =>
     http.get(`/import/progress/${batchId}`),
   tasks: () =>
