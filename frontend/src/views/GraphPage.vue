@@ -94,13 +94,19 @@ async function loadOverview() {
   selectedItemId.value = ''
   try {
     const res = await graphApi.query()
-    const data = res.data.data
+    const data = res.data?.data
+    if (!data) {
+      console.error('图谱数据为空，可能 Neo4j 未运行或数据库无数据')
+      return
+    }
     nodes.value = data.nodes || []
     edges.value = data.edges || []
     // 同时作为搜索结果展示
     searchResults.value = (data.nodes || []).filter((n: GraphNode) => n.type === 'item')
     await nextTick()
     renderChart()
+  } catch (err: any) {
+    console.error('加载图谱失败:', err)
   } finally {
     graphLoading.value = false
   }
@@ -130,11 +136,17 @@ async function selectItem(item: GraphNode) {
   graphLoading.value = true
   try {
     const res = await graphApi.query(item.id)
-    const data = res.data.data
+    const data = res.data?.data
+    if (!data) {
+      console.error('事项图谱数据为空:', item.id)
+      return
+    }
     nodes.value = data.nodes || []
     edges.value = data.edges || []
     await nextTick()
     renderChart()
+  } catch (err: any) {
+    console.error('加载事项图谱失败:', err)
   } finally {
     graphLoading.value = false
   }

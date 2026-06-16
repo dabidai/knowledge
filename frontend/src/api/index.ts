@@ -18,7 +18,14 @@ http.interceptors.request.use(config => {
 
 // 响应拦截器：统一错误处理
 http.interceptors.response.use(
-  res => res,
+  res => {
+    // 后端业务错误（HTTP 200 但业务 code 非 200）
+    if (res.data && typeof res.data.code === 'number' && res.data.code >= 400) {
+      ElMessage.error(res.data.message || '请求失败')
+      return Promise.reject(new Error(res.data.message || '请求失败'))
+    }
+    return res
+  },
   err => {
     if (err.response?.status === 401) {
       localStorage.removeItem('token')

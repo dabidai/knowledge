@@ -50,6 +50,11 @@ public class GraphController {
             @RequestParam(required = false) String itemId,
             @AuthenticationPrincipal User user) {
 
+        // 防御：无部门信息的用户无法查询图谱
+        if (user.getDepartment() == null) {
+            return ApiResponse.error(400, "当前用户未关联部门，无法查询知识图谱");
+        }
+
         try (Session session = neo4jDriver.session()) {
             if (itemId != null && !itemId.isBlank()) {
                 return ApiResponse.ok(queryItemGraph(session, itemId));
@@ -58,7 +63,7 @@ public class GraphController {
             }
         } catch (Exception e) {
             log.error("图谱查询失败", e);
-            return ApiResponse.error(500, "图谱查询失败: " + e.getMessage());
+            return ApiResponse.error(500, "图谱查询失败，请确认 Neo4j 服务已启动且已导入文档");
         }
     }
 
