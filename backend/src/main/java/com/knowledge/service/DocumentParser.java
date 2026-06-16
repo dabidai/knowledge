@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 import org.w3c.dom.*;
 import javax.xml.parsers.*;
 
+import javax.xml.XMLConstants;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
@@ -81,13 +83,29 @@ public class DocumentParser {
         }
     }
 
+    /** 创建安全的 DocumentBuilderFactory（禁用 XXE） */
+    private static DocumentBuilderFactory secureFactory() {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+        } catch (Exception e) {
+            throw new RuntimeException("无法初始化安全的 XML 解析器", e);
+        }
+        return factory;
+    }
+
     /**
      * 解析 OFD 版式文档
      * OFD 本质是 ZIP 压缩包，内含 XML 文件。遍历 Content.xml 提取文本。
      */
     private String parseOfd(Path filePath) {
         try (ZipFile zip = new ZipFile(filePath.toFile())) {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilderFactory factory = secureFactory();
             DocumentBuilder builder = factory.newDocumentBuilder();
             StringBuilder sb = new StringBuilder();
 
@@ -131,7 +149,7 @@ public class DocumentParser {
             return result;
         } catch (Exception e) {
             log.error("OFD 解析失败: {}", filePath, e);
-            return "[OFD 解析异常: " + e.getMessage() + "] " + filePath.getFileName();
+            return "[OFD 文档 — 解析失败] " + filePath.getFileName();
         }
     }
 
@@ -161,7 +179,7 @@ public class DocumentParser {
 
         // 回退：当作 ZIP 压缩包，提取所有 XML 中的文本
         try (ZipFile zip = new ZipFile(filePath.toFile())) {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilderFactory factory = secureFactory();
             DocumentBuilder builder = factory.newDocumentBuilder();
             StringBuilder sb = new StringBuilder();
 
@@ -181,7 +199,7 @@ public class DocumentParser {
             return "[WPS 文档 — 未能提取文本内容] " + filePath.getFileName();
         } catch (Exception e) {
             log.error("WPS 解析失败: {}", filePath, e);
-            return "[WPS 解析异常: " + e.getMessage() + "] " + filePath.getFileName();
+            return "[WPS 文档 — 解析失败] " + filePath.getFileName();
         }
     }
 

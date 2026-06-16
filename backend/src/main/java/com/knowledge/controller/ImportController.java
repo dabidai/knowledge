@@ -44,6 +44,12 @@ public class ImportController {
 
     /** 从服务器本地路径导入压缩包（跳过上传，适合大文件） */
     @PostMapping("/from-path")
+    @org.springframework.cache.annotation.Caching(evict = {
+        @org.springframework.cache.annotation.CacheEvict(value = "search", allEntries = true),
+        @org.springframework.cache.annotation.CacheEvict(value = "browseTree", allEntries = true),
+        @org.springframework.cache.annotation.CacheEvict(value = "graphOverview", allEntries = true),
+        @org.springframework.cache.annotation.CacheEvict(value = "importTasks", allEntries = true)
+    })
     public ResponseEntity<ApiResponse<Map<String, String>>> importFromPath(
             @RequestBody Map<String, String> body) {
         String path = body.get("path");
@@ -63,6 +69,12 @@ public class ImportController {
 
     /** 从服务器目录扫描导入所有文档 */
     @PostMapping("/from-dir")
+    @org.springframework.cache.annotation.Caching(evict = {
+        @org.springframework.cache.annotation.CacheEvict(value = "search", allEntries = true),
+        @org.springframework.cache.annotation.CacheEvict(value = "browseTree", allEntries = true),
+        @org.springframework.cache.annotation.CacheEvict(value = "graphOverview", allEntries = true),
+        @org.springframework.cache.annotation.CacheEvict(value = "importTasks", allEntries = true)
+    })
     public ResponseEntity<ApiResponse<Map<String, String>>> importFromDir(
             @RequestBody Map<String, String> body) {
         String path = body.get("path");

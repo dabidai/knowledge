@@ -51,6 +51,16 @@ public class ImportService {
     @Value("${document.chunk-overlap}")
     private int chunkOverlap;
 
+    // ──── 解压安全限制 ────
+    /** 单条目最大解压后大小（500MB） */
+    private static final long MAX_ENTRY_SIZE = 500 * 1024 * 1024;
+    /** 解压总大小上限（10GB） */
+    private static final long MAX_TOTAL_SIZE = 10L * 1024 * 1024 * 1024;
+    /** 解压条目数量上限 */
+    private static final int MAX_ENTRY_COUNT = 10_000;
+    /** 压缩比告警阈值（100:1） */
+    private static final int COMPRESSION_RATIO_WARN = 100;
+
     /**
      * 导入压缩包（浏览器 HTTP 上传）
      * @param file      上传的压缩包
@@ -81,10 +91,11 @@ public class ImportService {
         Path root = Path.of(importRootDir).toAbsolutePath().normalize();
 
         if (!path.startsWith(root)) {
-            throw new IllegalArgumentException("文件路径不在允许的根目录下: " + root);
+            log.warn("服务器路径导入越权尝试: {} (允许根目录: {})", path, root);
+            throw new IllegalArgumentException("文件路径不在允许的范围内");
         }
         if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("文件不存在或不是普通文件: " + path);
+            throw new IllegalArgumentException("文件不存在或不是普通文件");
         }
 
         return doImport(path, targetDept, path.getFileName().toString());
@@ -101,10 +112,11 @@ public class ImportService {
         Path root = Path.of(importRootDir).toAbsolutePath().normalize();
 
         if (!dirPath.startsWith(root)) {
-            throw new IllegalArgumentException("目录路径不在允许的根目录下: " + root);
+            log.warn("服务器目录导入越权尝试: {} (允许根目录: {})", dirPath, root);
+            throw new IllegalArgumentException("目录路径不在允许的范围内");
         }
         if (!Files.isDirectory(dirPath)) {
-            throw new IllegalArgumentException("路径不存在或不是目录: " + dirPath);
+            throw new IllegalArgumentException("路径不存在或不是目录");
         }
 
         String batchId = UUID.randomUUID().toString().replace("-", "");
@@ -115,7 +127,7 @@ public class ImportService {
         // 扫描目录下所有文档文件
         List<Path> docFiles = new ArrayList<>();
         Map<String, Path> csvFiles = new HashMap<>();
-        try (var stream = Files.walk(dirPath)) {
+        try (var stream = Files.walk(dirPath, 16)) {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
                 if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
@@ -171,9 +183,8 @@ public class ImportService {
             try {
                 String plainText = processDocument(docPath, targetDept, isPublic, batchId);
                 String fileName = docPath.getFileName().toString();
-                Document matched = docRepo.findAll().stream()
-                        .filter(d -> "matched".equals(d.getStatus())
-                                && d.getFileName() != null
+                Document matched = docRepo.findByStatus("matched").stream()
+                        .filter(d -> d.getFileName() != null
                                 && (d.getFileName().contains(extractBaseName(fileName))
                                     || fileName.contains(extractBaseName(d.getFileName()))))
                         .findFirst().orElse(null);
@@ -240,7 +251,7 @@ public class ImportService {
         // 3. 分类文件
         Map<String, Path> csvFiles = new HashMap<>();
         List<Path> docFiles = new ArrayList<>();
-        try (var stream = Files.walk(extractDir)) {
+        try (var stream = Files.walk(extractDir, 16)) {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
                 if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
@@ -286,9 +297,8 @@ public class ImportService {
                 String plainText = processDocument(docPath, targetDept, isPublic, batchId);
                 // 从 DB 获取刚保存的文档 fileId
                 String fileName = docPath.getFileName().toString();
-                Document matched = docRepo.findAll().stream()
-                        .filter(d -> "matched".equals(d.getStatus())
-                                && d.getFileName() != null
+                Document matched = docRepo.findByStatus("matched").stream()
+                        .filter(d -> d.getFileName() != null
                                 && (d.getFileName().contains(extractBaseName(fileName))
                                     || fileName.contains(extractBaseName(d.getFileName()))))
                         .findFirst().orElse(null);
@@ -367,7 +377,7 @@ public class ImportService {
 
         // 重新扫描文档文件
         List<Path> remainingFiles = new ArrayList<>();
-        try (var stream = Files.walk(extractDir)) {
+        try (var stream = Files.walk(extractDir, 16)) {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
                 if (name.endsWith(".doc") || name.endsWith(".docx")
@@ -411,10 +421,9 @@ public class ImportService {
             }
         }
 
-        // 完成
+        // 完成（保留历史错误记录以供审计）
         task.setStatus("complete");
         task.setCompletedAt(java.time.LocalDateTime.now());
-        task.setErrors(null); // 清除之前失败的错误信息
         taskRepo.save(task);
 
         log.info("断点续传完成: batchId={}, 最终处理 {} 个文件", batchId, task.getProcessedFiles());
@@ -442,8 +451,7 @@ public class ImportService {
         String markdown = documentParser.toMarkdown(plainText);
 
         // 2. 在 document 表中匹配（按文件名）
-        Optional<Document> matchOpt = docRepo.findAll().stream()
-                .filter(d -> "expected".equals(d.getStatus()))
+        Optional<Document> matchOpt = docRepo.findByStatus("expected").stream()
                 .filter(d -> fileName.contains(extractBaseName(d.getFileName())) ||
                              d.getFileName().contains(extractBaseName(fileName)))
                 .findFirst();
@@ -558,8 +566,16 @@ public class ImportService {
     private void extractZip(InputStream inputStream, Path targetDir) throws Exception {
         try (var archive = new org.apache.commons.compress.archivers.zip.ZipArchiveInputStream(inputStream)) {
             org.apache.commons.compress.archivers.ArchiveEntry entry;
+            int entryCount = 0;
             while ((entry = archive.getNextEntry()) != null) {
+                if (++entryCount > MAX_ENTRY_COUNT) {
+                    throw new IllegalArgumentException("压缩包条目数超过上限: " + MAX_ENTRY_COUNT);
+                }
                 if (!archive.canReadEntryData(entry)) continue;
+                if (entry.getSize() > MAX_ENTRY_SIZE) {
+                    log.warn("Zip 条目过大（已跳过）: {} ({} 字节)", entry.getName(), entry.getSize());
+                    continue;
+                }
                 writeEntry(targetDir, archive, entry.getName(), entry.isDirectory());
             }
         }
@@ -574,12 +590,20 @@ public class ImportService {
                     .setFile(temp.toFile())
                     .get()) {
                 org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry entry;
+                int entryCount = 0;
                 while ((entry = szFile.getNextEntry()) != null) {
+                    if (++entryCount > MAX_ENTRY_COUNT) {
+                        throw new IllegalArgumentException("压缩包条目数超过上限: " + MAX_ENTRY_COUNT);
+                    }
                     if (entry.isDirectory()) {
                         writeEntry(targetDir, null, entry.getName(), true);
                     } else {
                         Path outPath = targetDir.resolve(entry.getName()).normalize();
                         if (!outPath.startsWith(targetDir)) continue;
+                        if (entry.getSize() > MAX_ENTRY_SIZE) {
+                            log.warn("7z 条目过大（已跳过）: {} ({} 字节)", entry.getName(), entry.getSize());
+                            continue;
+                        }
                         Files.createDirectories(outPath.getParent());
                         // 读取到 byte[] 再写
                         byte[] content = new byte[(int) entry.getSize()];
@@ -597,8 +621,16 @@ public class ImportService {
         // TarArchiveInputStream 自动处理 .tar / .tar.gz / .tar.bz2
         try (var archive = new org.apache.commons.compress.archivers.tar.TarArchiveInputStream(inputStream)) {
             org.apache.commons.compress.archivers.ArchiveEntry entry;
+            int entryCount = 0;
             while ((entry = archive.getNextEntry()) != null) {
+                if (++entryCount > MAX_ENTRY_COUNT) {
+                    throw new IllegalArgumentException("压缩包条目数超过上限: " + MAX_ENTRY_COUNT);
+                }
                 if (!archive.canReadEntryData(entry)) continue;
+                if (entry.getSize() > MAX_ENTRY_SIZE) {
+                    log.warn("TAR 条目过大（已跳过）: {} ({} 字节)", entry.getName(), entry.getSize());
+                    continue;
+                }
                 writeEntry(targetDir, archive, entry.getName(), entry.isDirectory());
             }
         }
@@ -611,7 +643,10 @@ public class ImportService {
 
     private void writeEntry(Path targetDir, InputStream source, String name, boolean isDir) throws Exception {
         Path outPath = targetDir.resolve(name).normalize();
-        if (!outPath.startsWith(targetDir)) return; // 防 Zip Slip
+        if (!outPath.startsWith(targetDir)) {
+            log.warn("Zip Slip 攻击已拦截: 条目名={}, 解析路径={}", name, outPath);
+            return;
+        }
         if (isDir) {
             Files.createDirectories(outPath);
         } else {
@@ -634,6 +669,7 @@ public class ImportService {
                 }
             }
             chunks.add(text.substring(start, end));
+            if (end >= text.length()) break; // 已到文本末尾，防止死循环
             start = end - chunkOverlap;
             if (start <= 0) start = chunkSize;
         }
