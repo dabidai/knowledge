@@ -2,7 +2,11 @@ package com.knowledge.controller;
 
 import com.knowledge.dto.ApiResponse;
 import com.knowledge.dto.SearchResult;
+import com.knowledge.entity.Item;
+import com.knowledge.entity.Opinion;
 import com.knowledge.entity.User;
+import com.knowledge.repository.ItemRepository;
+import com.knowledge.repository.OpinionRepository;
 import com.knowledge.service.AIClient;
 import com.knowledge.service.ElasticsearchService;
 import com.knowledge.service.ElasticsearchService.DocIndex;
@@ -11,6 +15,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,6 +41,8 @@ public class ChatController {
     private final AIClient aiClient;
     private final MinioService minioService;
     private final com.knowledge.service.ConversationService conversationService;
+    private final ItemRepository itemRepo;
+    private final OpinionRepository opinionRepo;
 
     /**
      * 智能体对话 —— 多轮上下文 + RAG 检索增强。
@@ -76,10 +83,43 @@ public class ChatController {
             List<DocIndex> docs = esService.hybridSearch(question, queryVector,
                     deptName, topK, "", "", "");
 
-            // 5. 整理来源文档
+            // 5. 从结构化数据库搜索事项和签阅记录
+            List<String> contexts = new ArrayList<>();
+            StringBuilder structCtx = new StringBuilder();
+
+            List<Item> matchedItems = itemRepo.searchByTitleKeyword(
+                    question, PageRequest.of(0, 10));
+            if (!matchedItems.isEmpty()) {
+                structCtx.append("\n【相关事项及签阅记录】\n");
+                for (Item item : matchedItems) {
+                    structCtx.append(String.format(
+                            "事项: %s | 分类: %s | 文号: %s | 发文单位: %s | 年度: %s | 类型: %s\n",
+                            item.getTitle(),
+                            item.getCategory() != null ? item.getCategory() : "-",
+                            item.getCategoryNo() != null ? item.getCategoryNo() : "-",
+                            item.getIssuer() != null ? item.getIssuer() : "-",
+                            item.getYear() != null ? item.getYear() : "-",
+                            item.getItemType() != null ? item.getItemType() : "-"));
+                    // 查询该事项的签阅记录
+                    List<Opinion> opinions = opinionRepo.findByItemItemId(item.getItemId());
+                    if (!opinions.isEmpty()) {
+                        structCtx.append("  签阅记录:\n");
+                        for (Opinion o : opinions) {
+                            structCtx.append(String.format("    - %s (%s): %s\n",
+                                    o.getSigner(),
+                                    o.getSignTime() != null ? o.getSignTime().toString() : "未知时间",
+                                    o.getContent() != null ? o.getContent() : ""));
+                        }
+                    }
+                }
+            }
+            if (!structCtx.isEmpty()) {
+                contexts.add(structCtx.toString());
+            }
+
+            // 6. 整理来源文档
             Set<String> seenFileIds = new HashSet<>();
             List<SearchResult.SourceDoc> sources = new ArrayList<>();
-            List<String> contexts = new ArrayList<>();
 
             for (DocIndex doc : docs) {
                 contexts.add(doc.getContent());
@@ -95,15 +135,15 @@ public class ChatController {
                 }
             }
 
-            // 6. 提取对话历史
+            // 7. 提取对话历史
             @SuppressWarnings("unchecked")
             List<Map<String, String>> history = (List<Map<String, String>>)
                     body.getOrDefault("history", Collections.emptyList());
 
-            // 7. 智能体对话（带历史 + RAG 上下文）
+            // 8. 智能体对话（带历史 + RAG 上下文 + 结构化事项数据）
             String answer = aiClient.chat(question, contexts, history);
 
-            // 8. 保存 AI 回答
+            // 9. 保存 AI 回答
             conversationService.addMessage(conversationId, "assistant", answer, sources);
 
             ChatResult result = ChatResult.builder()
