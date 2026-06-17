@@ -51,8 +51,15 @@ export const searchApi = {
 }
 
 export const chatApi = {
-  send: (data: { question: string; topK?: number; history?: { role: string; content: string }[] }) =>
+  send: (data: { question: string; topK?: number; history?: { role: string; content: string }[]; conversationId?: number }) =>
     http.post('/chat', data),
+}
+
+export const conversationApi = {
+  list: () => http.get('/conversations'),
+  messages: (id: number) => http.get(`/conversations/${id}/messages`),
+  create: (title: string) => http.post('/conversations', { title }),
+  delete: (id: number) => http.delete(`/conversations/${id}`),
 }
 
 export const importApi = {
