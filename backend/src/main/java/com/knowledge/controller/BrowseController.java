@@ -42,8 +42,12 @@ public class BrowseController {
      * @return 四级树形结构
      */
     @GetMapping("/tree")
-    @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
+    // 临时关闭缓存排查 500 问题，确认无误后可恢复
+    // @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
     public ApiResponse<List<TreeNode>> tree(@AuthenticationPrincipal User user) {
+        if (user.getDepartment() == null) {
+            return ApiResponse.error(400, "当前用户未关联部门，无法浏览文档目录");
+        }
         String deptName = user.getDepartment().getName();
         boolean isAdmin = "admin".equals(user.getRole());
 
@@ -136,7 +140,7 @@ public class BrowseController {
             return ApiResponse.ok(Map.of("fileId", fileId, "content", content));
         } catch (Exception e) {
             log.error("获取文档失败: {}", fileId, e);
-            return ApiResponse.error(500, "获取文档失败: " + e.getMessage());
+            return ApiResponse.error(500, "获取文档失败，请确认 MinIO 服务已启动且文档已导入");
         }
     }
 
