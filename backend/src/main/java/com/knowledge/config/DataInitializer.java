@@ -40,15 +40,7 @@ public class DataInitializer {
     @Bean
     public ApplicationRunner initDefaultData() {
         return args -> {
-            // 幂等：已有用户则跳过
-            if (userRepo.count() > 0) {
-                log.info("系统已初始化，跳过默认数据创建 (已有 {} 个用户)", userRepo.count());
-                return;
-            }
-
-            log.info("━━━ 首次启动，开始初始化默认数据 ━━━");
-
-            // 1. 创建默认部门
+            // 1. 默认部门 —— 始终创建（幂等），确保新增用户时可选择部门
             for (String deptName : DEFAULT_DEPTS) {
                 if (!deptRepo.existsByName(deptName)) {
                     deptRepo.save(Department.builder().name(deptName).build());
@@ -56,12 +48,16 @@ public class DataInitializer {
                 }
             }
 
-            // 2. 确保 admin 所属部门存在
+            // 2. 默认管理员 —— 仅在无用户时创建
+            if (userRepo.count() > 0) {
+                log.info("已有 {} 个用户，跳过管理员创建", userRepo.count());
+                return;
+            }
+
             Department adminDept = deptRepo.findByName(DEFAULT_ADMIN_DEPT)
                     .orElseGet(() -> deptRepo.save(
                             Department.builder().name(DEFAULT_ADMIN_DEPT).build()));
 
-            // 3. 创建默认管理员
             userRepo.save(User.builder()
                     .username(DEFAULT_ADMIN_USERNAME)
                     .password(passwordEncoder.encode(DEFAULT_ADMIN_PASSWORD))
@@ -70,7 +66,6 @@ public class DataInitializer {
                     .build());
 
             log.info("  ✅ 创建管理员: {} / {}", DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD);
-            log.info("━━━ 初始化完成，请使用 admin/admin123 登录 ━━━");
         };
     }
 }
