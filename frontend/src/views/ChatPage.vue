@@ -23,25 +23,25 @@
           <div class="msg-content">
             <!-- AI 回答用 Markdown 渲染 -->
             <div v-if="msg.role === 'assistant'" class="msg-text markdown-body"
-                 v-html="renderMd(msg.content)"></div>
+                 v-html="renderMd(msg.content, msg.sources)"></div>
             <div v-else class="msg-text">{{ msg.content }}</div>
 
             <!-- 来源文档（仅 AI 回答附带） -->
             <div v-if="msg.sources && msg.sources.length > 0" class="msg-sources">
-              <el-collapse>
-                <el-collapse-item :title="`📄 参考来源 (${msg.sources.length})`">
-                  <div v-for="src in msg.sources" :key="src.fileId" class="source-item">
-                    <div class="source-name">{{ src.fileName }}</div>
-                    <div class="source-snippet" v-html="src.snippet || '无预览'"></div>
-                    <div class="source-meta">
-                      <el-tag size="small">{{ src.deptName }}</el-tag>
-                      <a :href="src.downloadUrl" target="_blank" v-if="src.downloadUrl">
-                        <el-button size="small" type="primary" link>⬇ 下载</el-button>
-                      </a>
-                    </div>
+              <div class="sources-header">📄 参考来源 ({{ msg.sources.length }})</div>
+              <div class="sources-list">
+                <div v-for="src in msg.sources" :key="src.fileId" class="source-item">
+                  <div class="source-name">{{ src.fileName }}</div>
+                  <div class="source-snippet" v-html="src.snippet || '无预览'"></div>
+                  <div class="source-meta">
+                    <el-tag size="small">{{ src.deptName }}</el-tag>
+                    <a :href="src.downloadUrl" target="_blank" v-if="src.downloadUrl">
+                      <el-button size="small" type="primary">⬇ 下载原文</el-button>
+                    </a>
+                    <span v-else style="color:#ccc;font-size:12px">(文件暂不可下载)</span>
                   </div>
-                </el-collapse-item>
-              </el-collapse>
+                </div>
+              </div>
             </div>
 
             <div class="msg-time">{{ msg.time }}</div>
@@ -172,9 +172,19 @@ async function scrollBottom() {
   }
 }
 
-/** Markdown 渲染 */
-function renderMd(text: string) {
-  return md.render(text || '')
+/** Markdown 渲染 + 来源文件链接注入 */
+function renderMd(text: string, sources?: any[]) {
+  let html = md.render(text || '')
+  if (sources && sources.length > 0) {
+    for (const src of sources) {
+      if (!src.fileName || !src.downloadUrl) continue
+      const name = src.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // 转义正则特殊字符
+      const regex = new RegExp(`(${name})`, 'gi')
+      const link = `<a href="${src.downloadUrl}" target="_blank" title="下载: ${src.fileName}">$1</a>`
+      html = html.replace(regex, link)
+    }
+  }
+  return html
 }
 </script>
 
@@ -204,8 +214,11 @@ function renderMd(text: string) {
 .msg-ai .msg-text { background: #f5f7fa; }
 .msg-time { font-size: 11px; color: #ccc; margin-top: 4px; }
 
-.msg-sources { margin-top: 8px; text-align: left; }
-.source-item { padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+.msg-sources { margin-top: 12px; text-align: left; background: #fafafa; border-radius: 8px; padding: 12px; }
+.sources-header { font-size: 13px; font-weight: 600; color: #666; margin-bottom: 8px; }
+.sources-list { max-height: 300px; overflow-y: auto; }
+.source-item { padding: 8px 0; border-bottom: 1px solid #eee; }
+.source-item:last-child { border-bottom: none; }
 .source-name { font-weight: bold; font-size: 13px; }
 .source-snippet { color: #999; font-size: 12px; margin: 2px 0; }
 .source-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
