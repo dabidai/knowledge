@@ -12,13 +12,14 @@
           class="conv-item"
           :class="{ active: conv.id === currentConvId }"
           @click="selectConv(conv.id)"
-          @mouseenter="hoverConvId = conv.id"
-          @mouseleave="hoverConvId = 0"
         >
           <span class="conv-title">{{ conv.title }}</span>
-          <el-button v-show="hoverConvId === conv.id"
-            circle size="small" text type="danger"
-            @click.stop="deleteConv(conv.id)">✕</el-button>
+          <el-popconfirm title="删除该对话？" @confirm="deleteConv(conv.id)">
+            <template #reference>
+              <el-button circle size="small" text type="danger"
+                @click.stop>✕</el-button>
+            </template>
+          </el-popconfirm>
         </div>
         <el-empty v-if="!convLoading && conversations.length === 0"
           description="暂无对话" :image-size="60" />
@@ -103,7 +104,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted } from 'vue'
 import { chatApi, conversationApi } from '@/api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
@@ -123,7 +124,6 @@ interface ConvItem {
 const conversations = ref<ConvItem[]>([])
 const convLoading = ref(false)
 const currentConvId = ref<number | null>(null)
-const hoverConvId = ref(0)
 const messages = ref<Message[]>([])
 const input = ref('')
 const thinking = ref(false)
@@ -165,22 +165,36 @@ async function selectConv(id: number) {
   }
 }
 
-function newChat() {
-  currentConvId.value = null
-  messages.value = []
-  input.value = ''
-  thinking.value = false
-  ElMessage.success('已切换到新对话')
+async function newChat() {
+  try {
+    const res = await conversationApi.create('新对话')
+    const conv = res.data.data
+    conversations.value.unshift(conv)
+    currentConvId.value = conv.id
+    messages.value = []
+    input.value = ''
+    thinking.value = false
+  } catch {
+    // 后端不可用时仍允许本地操作
+    currentConvId.value = null
+    messages.value = []
+    input.value = ''
+    thinking.value = false
+  }
 }
 
 async function deleteConv(id: number) {
   try {
-    await ElMessageBox.confirm('确定删除该对话？', '提示', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
     await conversationApi.delete(id)
     ElMessage.success('已删除')
-    if (currentConvId.value === id) newChat()
-    await loadConversations()
-  } catch { /* 取消或失败 */ }
+    if (currentConvId.value === id) {
+      currentConvId.value = null
+      messages.value = []
+    }
+    conversations.value = conversations.value.filter(c => c.id !== id)
+  } catch {
+    ElMessage.error('删除失败')
+  }
 }
 
 async function handleSend() {
@@ -207,6 +221,7 @@ async function handleSend() {
 
     const data = res.data.data
     if (data.conversationId && !currentConvId.value) {
+      // 未提前创建对话时的兼容路径（直接发消息没有先点新对话）
       currentConvId.value = data.conversationId
       await loadConversations()
     }
