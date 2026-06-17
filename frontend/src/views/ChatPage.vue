@@ -17,8 +17,10 @@
         >
           <span class="conv-title">{{ conv.title }}</span>
           <el-button v-show="hoverConvId === conv.id"
-            :icon="Delete" circle size="small" text type="danger"
-            @click.stop="deleteConv(conv.id)" />
+            circle size="small" text type="danger"
+            @click.stop="deleteConv(conv.id)">
+            <el-icon><Delete /></el-icon>
+          </el-button>
         </div>
         <el-empty v-if="!convLoading && conversations.length === 0"
           description="暂无对话" :image-size="60" />
@@ -104,7 +106,6 @@
 import { ref, nextTick, onMounted } from 'vue'
 import { chatApi, conversationApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
