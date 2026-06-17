@@ -3,7 +3,7 @@
     <!-- 左侧对话历史 -->
     <div class="chat-sidebar">
       <el-button type="primary" @click="newChat" style="width:100%;margin-bottom:12px">
-        <el-icon><Plus /></el-icon> 新对话
+        + 新对话
       </el-button>
       <div class="conv-list" v-loading="convLoading">
         <div
@@ -18,9 +18,7 @@
           <span class="conv-title">{{ conv.title }}</span>
           <el-button v-show="hoverConvId === conv.id"
             circle size="small" text type="danger"
-            @click.stop="deleteConv(conv.id)">
-            <el-icon><Delete /></el-icon>
-          </el-button>
+            @click.stop="deleteConv(conv.id)">✕</el-button>
         </div>
         <el-empty v-if="!convLoading && conversations.length === 0"
           description="暂无对话" :image-size="60" />
@@ -167,9 +165,12 @@ async function selectConv(id: number) {
   }
 }
 
-async function newChat() {
+function newChat() {
   currentConvId.value = null
   messages.value = []
+  input.value = ''
+  thinking.value = false
+  ElMessage.success('已切换到新对话')
 }
 
 async function deleteConv(id: number) {
