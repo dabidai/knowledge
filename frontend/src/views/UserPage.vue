@@ -4,7 +4,10 @@
       <template #header>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <strong>👥 用户管理</strong>
-          <el-button type="primary" @click="showCreate = true">新增用户</el-button>
+          <div style="display:flex;gap:8px">
+            <el-button @click="showDeptDialog = true">新增部门</el-button>
+            <el-button type="primary" @click="showCreate = true">新增用户</el-button>
+          </div>
         </div>
       </template>
 
@@ -56,19 +59,44 @@
         <el-button type="primary" @click="handleCreate">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 新增部门对话框 -->
+    <el-dialog v-model="showDeptDialog" title="新增部门" width="360px">
+      <el-form label-width="80px">
+        <el-form-item label="部门名称">
+          <el-input v-model="newDeptName" placeholder="请输入部门名称" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showDeptDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleCreateDept">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { userApi } from '@/api'
+import { userApi, deptApi } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const users = ref<any[]>([])
 const loading = ref(false)
 const showCreate = ref(false)
-const depts = ['信息技术部', '办公室', '研究室']
-const form = reactive({ username: '', password: '', dept: '信息技术部', role: 'default' })
+const showDeptDialog = ref(false)
+const depts = ref<string[]>([])
+const newDeptName = ref('')
+const form = reactive({ username: '', password: '', dept: '', role: 'default' })
+
+async function loadDepts() {
+  try {
+    const res = await deptApi.list()
+    depts.value = (res.data.data || []).map((d: any) => d.name)
+    if (depts.value.length > 0 && !form.dept) {
+      form.dept = depts.value[0]
+    }
+  } catch { /* ignore */ }
+}
 
 async function loadUsers() {
   loading.value = true
@@ -89,6 +117,18 @@ async function handleCreate() {
   } catch {}
 }
 
+async function handleCreateDept() {
+  const name = newDeptName.value.trim()
+  if (!name) return
+  try {
+    await deptApi.create(name)
+    showDeptDialog.value = false
+    newDeptName.value = ''
+    ElMessage.success('部门创建成功')
+    loadDepts()
+  } catch {}
+}
+
 async function handleDelete(id: number) {
   try {
     await userApi.delete(id)
@@ -97,5 +137,5 @@ async function handleDelete(id: number) {
   } catch {}
 }
 
-onMounted(loadUsers)
+onMounted(() => { loadUsers(); loadDepts() })
 </script>
