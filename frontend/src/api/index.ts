@@ -59,6 +59,7 @@ export const conversationApi = {
   list: () => http.get('/conversations'),
   messages: (id: number) => http.get(`/conversations/${id}/messages`),
   create: (title: string) => http.post('/conversations', { title }),
+  rename: (id: number, title: string) => http.put(`/conversations/${id}`, { title }),
   delete: (id: number) => http.delete(`/conversations/${id}`),
 }
 

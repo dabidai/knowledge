@@ -71,6 +71,17 @@ public class ConversationController {
                 .build());
     }
 
+    /** 重命名对话 */
+    @PutMapping("/{id}")
+    public ApiResponse<String> rename(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body,
+            @AuthenticationPrincipal User user) {
+        String title = body.get("title");
+        conversationService.renameConversation(id, user.getId(), title);
+        return ApiResponse.ok("已重命名");
+    }
+
     /** 删除对话 */
     @DeleteMapping("/{id}")
     public ApiResponse<String> delete(

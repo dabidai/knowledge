@@ -79,6 +79,23 @@ public class ConversationService {
         return saved;
     }
 
+    /** 重命名对话 */
+    @Transactional
+    public void renameConversation(Long conversationId, Long userId, String newTitle) {
+        Conversation conv = convRepo.findById(conversationId)
+                .orElseThrow(() -> new IllegalArgumentException("对话不存在"));
+        if (!conv.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("无权修改该对话");
+        }
+        if (newTitle == null || newTitle.isBlank()) {
+            throw new IllegalArgumentException("标题不能为空");
+        }
+        String title = newTitle.trim();
+        if (title.length() > 100) title = title.substring(0, 100);
+        conv.setTitle(title);
+        convRepo.save(conv);
+    }
+
     /** 删除对话及其所有消息 */
     @Transactional
     public void deleteConversation(Long conversationId, Long userId) {

@@ -13,7 +13,18 @@
           :class="{ active: conv.id === currentConvId }"
           @click="selectConv(conv.id)"
         >
-          <span class="conv-title">{{ conv.title }}</span>
+          <input
+            v-if="renamingId === conv.id"
+            v-model="renameText"
+            class="conv-rename-input"
+            @keyup.enter="finishRename(conv.id)"
+            @blur="finishRename(conv.id)"
+            @click.stop
+            ref="renameInputRef"
+          />
+          <span v-else class="conv-title"
+                @dblclick.stop="startRename(conv)"
+                :title="'双击重命名'">{{ conv.title }}</span>
           <el-popconfirm title="删除该对话？" @confirm="deleteConv(conv.id)">
             <template #reference>
               <el-button circle size="small" text type="danger"
@@ -125,6 +136,9 @@ const conversations = ref<ConvItem[]>([])
 const convLoading = ref(false)
 const currentConvId = ref<number | null>(null)
 const messages = ref<Message[]>([])
+const renamingId = ref<number | null>(null)
+const renameText = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
 const input = ref('')
 const thinking = ref(false)
 const messagesRef = ref<HTMLElement | null>(null)
@@ -163,6 +177,27 @@ async function selectConv(id: number) {
   } catch {
     ElMessage.error('加载对话失败')
   }
+}
+
+function startRename(conv: ConvItem) {
+  renamingId.value = conv.id
+  renameText.value = conv.title
+  nextTick(() => {
+    const el = document.querySelector('.conv-rename-input') as HTMLInputElement
+    el?.focus()
+    el?.select()
+  })
+}
+
+async function finishRename(id: number) {
+  const newTitle = renameText.value.trim()
+  renamingId.value = null
+  if (!newTitle) return
+  try {
+    await conversationApi.rename(id, newTitle)
+    const conv = conversations.value.find(c => c.id === id)
+    if (conv) conv.title = newTitle
+  } catch { /* ignore */ }
 }
 
 async function newChat() {
@@ -284,7 +319,8 @@ function renderMd(text: string, sources?: any[]) {
 }
 .conv-item:hover { background: #f5f7fa; }
 .conv-item.active { background: #e6f4ff; border-left: 3px solid #409EFF; }
-.conv-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.conv-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; user-select: none; }
+.conv-rename-input { flex: 1; border: 1px solid #409EFF; border-radius: 4px; padding: 2px 6px; font-size: 13px; outline: none; background: #fff; }
 
 .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 16px 20px; scroll-behavior: smooth; }
