@@ -42,8 +42,7 @@ public class BrowseController {
      * @return 四级树形结构
      */
     @GetMapping("/tree")
-    // 临时关闭缓存排查 500 问题，确认无误后可恢复
-    // @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
+    @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
     public ApiResponse<List<TreeNode>> tree(@AuthenticationPrincipal User user) {
         if (user.getDepartment() == null) {
             return ApiResponse.error(400, "当前用户未关联部门，无法浏览文档目录");

@@ -120,8 +120,7 @@ public class ImportController {
 
     /** 查询导入历史列表 */
     @GetMapping("/tasks")
-    // 临时关闭缓存排查 500 问题，确认无误后可恢复
-    // @org.springframework.cache.annotation.Cacheable("importTasks")
+    @org.springframework.cache.annotation.Cacheable("importTasks")
     public ApiResponse<List<ImportTask>> tasks() {
         List<ImportTask> tasks = taskRepo.findAllByOrderByCreatedAtDesc();
         return ApiResponse.ok(tasks);

@@ -43,10 +43,9 @@ public class GraphController {
      * @return 图谱数据（节点列表 + 边列表）
      */
     @GetMapping
-    // 临时关闭缓存排查 500 问题，确认无误后可恢复
-    // @org.springframework.cache.annotation.Cacheable(
-    //         value = "graphOverview", key = "#user.department.name",
-    //         condition = "#itemId == null || #itemId.isEmpty()")
+    @org.springframework.cache.annotation.Cacheable(
+            value = "graphOverview", key = "#user.department.name",
+            condition = "#itemId == null || #itemId.isEmpty()")
     public ApiResponse<GraphData> query(
             @RequestParam(required = false) String itemId,
             @AuthenticationPrincipal User user) {

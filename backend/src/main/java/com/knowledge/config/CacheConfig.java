@@ -46,32 +46,22 @@ public class CacheConfig {
     }
 
     /**
-     * 按缓存名定制 TTL，覆盖默认的 1 小时配置。
+     * 按缓存名定制 TTL，继承全局 Jackson 序列化配置。
      *
+     * @param defaultConfig 全局默认配置（含 Jackson 序列化器）
      * @return RedisCacheManagerBuilderCustomizer 定制器
      */
     @Bean
-    public RedisCacheManagerBuilderCustomizer cacheCustomizer() {
+    public RedisCacheManagerBuilderCustomizer cacheCustomizer(
+            RedisCacheConfiguration defaultConfig) {
         return builder -> builder
                 .withCacheConfiguration("search",
-                        buildWithTtl(Duration.ofMinutes(10)))
+                        defaultConfig.entryTtl(Duration.ofMinutes(10)))
                 .withCacheConfiguration("browseTree",
-                        buildWithTtl(Duration.ofMinutes(30)))
+                        defaultConfig.entryTtl(Duration.ofMinutes(30)))
                 .withCacheConfiguration("graphOverview",
-                        buildWithTtl(Duration.ofMinutes(15)))
+                        defaultConfig.entryTtl(Duration.ofMinutes(15)))
                 .withCacheConfiguration("importTasks",
-                        buildWithTtl(Duration.ofMinutes(2)));
-    }
-
-    /**
-     * 构建指定 TTL 的缓存配置。
-     *
-     * @param ttl 过期时长
-     * @return 含指定 TTL 的 RedisCacheConfiguration
-     */
-    private RedisCacheConfiguration buildWithTtl(Duration ttl) {
-        return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(ttl)
-                .disableCachingNullValues();
+                        defaultConfig.entryTtl(Duration.ofMinutes(2)));
     }
 }
