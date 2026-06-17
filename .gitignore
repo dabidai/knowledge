@@ -27,3 +27,5 @@ ai-service/ai-models/
 *.zip
 *.txt
 *.csv
+*.xlsx
+*.PDF
