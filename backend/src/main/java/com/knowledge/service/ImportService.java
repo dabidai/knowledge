@@ -159,7 +159,11 @@ public class ImportService {
                 .build();
         taskRepo.save(task);
 
-        // 解析元数据
+        // 解析元数据 —— user.csv 必须先于 item.csv，确保 Department 节点
+        // 在 Neo4j 中已存在，否则 linkDeptOwnsItem 的 MATCH 会静默失败
+        if (csvFiles.containsKey("user")) {
+            csvImportService.importUserCsv(csvFiles.get("user"));
+        }
         if (csvFiles.containsKey("item")) {
             csvImportService.importItemCsv(csvFiles.get("item"), targetDept, isPublic, batchId);
         }
@@ -168,9 +172,6 @@ public class ImportService {
         }
         if (csvFiles.containsKey("opinions")) {
             csvImportService.importOpinionsCsv(csvFiles.get("opinions"), batchId);
-        }
-        if (csvFiles.containsKey("user")) {
-            csvImportService.importUserCsv(csvFiles.get("user"));
         }
 
         // 解析文档 —— CSV 已处理完，进度从 csvCount 起算
@@ -275,6 +276,9 @@ public class ImportService {
         task.setTotalFiles(csvCount + docFiles.size());
         taskRepo.save(task);
 
+        if (csvFiles.containsKey("user")) {
+            csvImportService.importUserCsv(csvFiles.get("user"));
+        }
         if (csvFiles.containsKey("item")) {
             csvImportService.importItemCsv(csvFiles.get("item"), targetDept, isPublic, batchId);
         }
@@ -283,9 +287,6 @@ public class ImportService {
         }
         if (csvFiles.containsKey("opinions")) {
             csvImportService.importOpinionsCsv(csvFiles.get("opinions"), batchId);
-        }
-        if (csvFiles.containsKey("user")) {
-            csvImportService.importUserCsv(csvFiles.get("user"));
         }
 
         // 5. 解析实际文档 —— CSV 已处理完，进度从 csvCount 起算

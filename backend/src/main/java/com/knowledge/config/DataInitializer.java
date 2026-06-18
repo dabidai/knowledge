@@ -4,6 +4,7 @@ import com.knowledge.entity.Department;
 import com.knowledge.entity.User;
 import com.knowledge.repository.DepartmentRepository;
 import com.knowledge.repository.UserRepository;
+import com.knowledge.service.GraphBuildService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationRunner;
@@ -28,6 +29,7 @@ public class DataInitializer {
     private final DepartmentRepository deptRepo;
     private final UserRepository userRepo;
     private final PasswordEncoder passwordEncoder;
+    private final GraphBuildService graphBuildService;
 
     /** 默认部门列表 */
     private static final List<String> DEFAULT_DEPTS = List.of("信息技术部", "办公室", "研究室");
@@ -46,6 +48,8 @@ public class DataInitializer {
                     deptRepo.save(Department.builder().name(deptName).build());
                     log.info("  ✅ 创建部门: {}", deptName);
                 }
+                // Neo4j 图节点同步创建（MERGE 幂等），避免缺少 user.csv 时图谱永远为空
+                graphBuildService.createDepartment(deptName);
             }
 
             // 2. 默认管理员 —— 仅在无用户时创建

@@ -100,8 +100,8 @@ public class GraphBuildService {
     public void linkDeptOwnsItem(String deptName, String itemId) {
         try (Session session = neo4jDriver.session()) {
             session.run("""
-                MATCH (d:Department {name: $deptName})
-                MATCH (i:Item {item_id: $itemId})
+                MERGE (d:Department {name: $deptName})
+                MERGE (i:Item {item_id: $itemId})
                 MERGE (d)-[:OWNS]->(i)
                 """, Map.of("deptName", deptName, "itemId", itemId));
         } catch (Exception e) {
@@ -201,7 +201,7 @@ public class GraphBuildService {
                 MERGE (u:User {username: $username})
                 SET u.role = $role
                 WITH u
-                MATCH (d:Department {name: $deptName})
+                MERGE (d:Department {name: $deptName})
                 MERGE (u)-[:MEMBER_OF]->(d)
                 """, Map.of("username", username, "role", role, "deptName", deptName));
             log.debug("Neo4j 用户节点: {} ({} -> {})", username, role, deptName);
