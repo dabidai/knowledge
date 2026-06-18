@@ -100,9 +100,10 @@ public class CsvImportService {
     private void createDeptIfNotExist(String name) {
         if (!deptRepo.existsByName(name)) {
             deptRepo.save(Department.builder().name(name).build());
-            graphBuildService.createDepartment(name);
-            log.info("创建部门: {}", name);
         }
+        // Neo4j MERGE 幂等，每次都调用确保图节点存在，
+        // 避免"MySQL 已有但 Neo4j 缺失"的脏状态
+        graphBuildService.createDepartment(name);
     }
 
     private void createUserIfNotExist(String deptName, String username,
@@ -112,7 +113,6 @@ public class CsvImportService {
                     .orElseGet(() -> {
                         Department d = Department.builder().name(deptName).build();
                         deptRepo.save(d);
-                        graphBuildService.createDepartment(deptName);
                         return d;
                     });
 
@@ -123,11 +123,11 @@ public class CsvImportService {
                     .department(dept)
                     .build());
 
-            // 同步 Neo4j
-            graphBuildService.createUser(username, role != null ? role : "default", deptName);
-
             log.info("创建用户: {} ({})", username, deptName);
         }
+        // Neo4j 图节点每次导入都确保存在，不受 MySQL 已有记录影响
+        graphBuildService.createDepartment(deptName);
+        graphBuildService.createUser(username, role != null ? role : "default", deptName);
     }
 
     /**
