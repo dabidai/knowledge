@@ -6,7 +6,7 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
-import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 
 import java.time.Duration;
@@ -35,8 +35,11 @@ public class CacheConfig {
      */
     @Bean
     public RedisCacheConfiguration defaultCacheConfig(ObjectMapper objectMapper) {
-        Jackson2JsonRedisSerializer<Object> serializer =
-                new Jackson2JsonRedisSerializer<>(objectMapper, Object.class);
+        // GenericJackson2JsonRedisSerializer 会在 JSON 中写入 @class 类型信息，
+        // 反序列化时能还原为原始类型（如 ApiResponse<GraphData>），
+        // 避免 LinkedHashMap 无法强转为 ApiResponse 的 ClassCastException
+        GenericJackson2JsonRedisSerializer serializer =
+                new GenericJackson2JsonRedisSerializer(objectMapper);
 
         return RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofHours(1))
