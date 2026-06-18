@@ -47,8 +47,12 @@
       <!-- 右侧图谱可视化 -->
       <el-main class="graph-panel">
         <div v-loading="graphLoading" style="height:100%;position:relative">
-          <div ref="chartRef" style="width:100%;height:100%"></div>
-          <el-empty v-if="!graphLoading && nodes.length === 0" description="暂无图谱数据，请先导入文档" />
+          <div v-if="nodes.length > 0" ref="chartRef" style="width:100%;height:100%"></div>
+          <el-empty
+            v-if="!graphLoading && nodes.length === 0"
+            description="暂无图谱数据，请先导入文档"
+            style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)"
+          />
         </div>
       </el-main>
     </el-container>
