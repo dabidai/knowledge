@@ -31,7 +31,8 @@ public class SearchController {
     @PostMapping
     @RateLimit(maxRequests = 30, windowSeconds = 60)
     @Cacheable(value = "search", key = "#body['query'] + '_' + #body['topK'] + '_' " +
-            "+ #body['category'] + '_' + #body['year'] + '_' + #user.department.name")
+            "+ #body['category'] + '_' + #body['year'] + '_' + #user.department.name",
+            unless = "#result.code != 200")
     public ApiResponse<SearchResult> search(
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {

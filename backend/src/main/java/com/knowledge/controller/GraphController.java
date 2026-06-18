@@ -45,7 +45,8 @@ public class GraphController {
     @GetMapping
     @org.springframework.cache.annotation.Cacheable(
             value = "graphOverview", key = "#user.department.name",
-            condition = "#itemId == null || #itemId.isEmpty()")
+            condition = "#itemId == null || #itemId.isEmpty()",
+            unless = "#result.code != 200")
     public ApiResponse<GraphData> query(
             @RequestParam(required = false) String itemId,
             @AuthenticationPrincipal User user) {
