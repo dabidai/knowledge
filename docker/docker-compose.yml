@@ -106,21 +106,6 @@ services:
       - kb-net
     mem_limit: 6g
 
-  # ==================== LLM 推理 ====================
-  ollama:
-    image: ollama/ollama:0.4.7
-    container_name: kb-ollama
-    environment:
-      - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_KEEP_ALIVE=5m
-    volumes:
-      - ./ollama/models:/root/.ollama
-    restart: unless-stopped
-    networks:
-      - kb-net
-    mem_limit: 24g
-
   # ==================== AI 服务 ====================
   ai-service:
     build:
@@ -128,14 +113,15 @@ services:
       dockerfile: Dockerfile
     container_name: kb-ai
     environment:
-      OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: qwen3:8b-q4_K_M
+      OLLAMA_HOST: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3:32b
       EMBEDDING_MODEL: BAAI/bge-large-zh-v1.5
       HF_HOME: /app/.cache/huggingface
     volumes:
       - ./data/ai-models:/app/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - ollama
       - elasticsearch
     restart: unless-stopped
     networks:
