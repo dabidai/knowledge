@@ -32,11 +32,14 @@
         </el-table-column>
         <el-table-column label="进度" width="160">
           <template #default="{ row }">
-            <el-progress
-              :percentage="row.totalFiles > 0 ? Math.round(row.processedFiles * 100 / row.totalFiles) : 0"
-              :status="row.status === 'failed' ? 'exception' : row.status === 'complete' ? 'success' : undefined"
-            />
-            <span style="font-size:12px;color:#999">{{ row.processedFiles }} / {{ row.totalFiles }}</span>
+            <template v-if="row.totalFiles > 0">
+              <el-progress
+                :percentage="Math.round(row.processedFiles * 100 / row.totalFiles)"
+                :status="row.status === 'failed' ? 'exception' : row.status === 'complete' ? 'success' : undefined"
+              />
+              <span style="font-size:12px;color:#999">{{ row.processedFiles }} / {{ row.totalFiles }}</span>
+            </template>
+            <span v-else style="font-size:12px;color:#999">--</span>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="170" />
@@ -71,7 +74,9 @@
           <el-tag v-else-if="currentTask?.status === 'failed'" type="danger" size="small">失败</el-tag>
           <el-tag v-else type="info" size="small">{{ currentTask?.status }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="文件进度">{{ currentTask?.processedFiles }} / {{ currentTask?.totalFiles }}</el-descriptions-item>
+        <el-descriptions-item label="文件进度">
+          {{ currentTask?.totalFiles > 0 ? `${currentTask?.processedFiles} / ${currentTask?.totalFiles}` : '--' }}
+        </el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ currentTask?.createdAt }}</el-descriptions-item>
         <el-descriptions-item label="完成时间">{{ currentTask?.completedAt || '-' }}</el-descriptions-item>
         <el-descriptions-item label="错误信息" :span="2">

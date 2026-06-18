@@ -155,7 +155,7 @@ public class ImportService {
                 .archiveName("目录: " + dirPath.getFileName())
                 .targetDept(targetDept)
                 .status("metadata_parsed")
-                .totalFiles(docFiles.size())
+                .totalFiles(csvFiles.size() + docFiles.size())
                 .build();
         taskRepo.save(task);
 
@@ -173,8 +173,9 @@ public class ImportService {
             csvImportService.importUserCsv(csvFiles.get("user"));
         }
 
-        // 解析文档
+        // 解析文档 —— CSV 已处理完，进度从 csvCount 起算
         task.setStatus("parsing");
+        task.setProcessedFiles(csvFiles.size());
         taskRepo.save(task);
 
         Map<String, String> docTextMap = new LinkedHashMap<>();
@@ -191,7 +192,7 @@ public class ImportService {
                 if (matched != null && plainText != null && !plainText.isEmpty()) {
                     docTextMap.put(matched.getFileId(), plainText);
                 }
-                task.setProcessedFiles(i + 1);
+                task.setProcessedFiles(csvFiles.size() + i + 1);
                 taskRepo.save(task);
             } catch (Exception e) {
                 log.error("文档解析失败: {}", docPath.getFileName(), e);
@@ -246,8 +247,6 @@ public class ImportService {
         try (InputStream is = Files.newInputStream(archivePath)) {
             extractArchive(is, extractDir);
         }
-        task.setStatus("metadata_parsed");
-
         // 3. 分类文件
         Map<String, Path> csvFiles = new HashMap<>();
         List<Path> docFiles = new ArrayList<>();
@@ -270,6 +269,12 @@ public class ImportService {
         }
 
         // 4. 解析元数据 CSV（先于文档解析）
+        // 总文件数 = CSV 元数据 + 文档，让进度列不再显示 0/0
+        int csvCount = csvFiles.size();
+        task.setStatus("metadata_parsed");
+        task.setTotalFiles(csvCount + docFiles.size());
+        taskRepo.save(task);
+
         if (csvFiles.containsKey("item")) {
             csvImportService.importItemCsv(csvFiles.get("item"), targetDept, isPublic, batchId);
         }
@@ -283,9 +288,9 @@ public class ImportService {
             csvImportService.importUserCsv(csvFiles.get("user"));
         }
 
-        // 5. 解析实际文档
+        // 5. 解析实际文档 —— CSV 已处理完，进度从 csvCount 起算
         task.setStatus("parsing");
-        task.setTotalFiles(docFiles.size());
+        task.setProcessedFiles(csvCount);
         taskRepo.save(task);
 
         // 收集 (fileId → 解析文本) 映射用于后续交叉引用检测
@@ -305,7 +310,7 @@ public class ImportService {
                 if (matched != null && plainText != null && !plainText.isEmpty()) {
                     docTextMap.put(matched.getFileId(), plainText);
                 }
-                task.setProcessedFiles(i + 1);
+                task.setProcessedFiles(csvCount + i + 1);
                 taskRepo.save(task);
             } catch (Exception e) {
                 log.error("文档解析失败: {}", docPath.getFileName(), e);
