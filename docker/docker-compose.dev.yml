@@ -33,7 +33,7 @@ services:
     mem_limit: 512m
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: kb-minio
     environment:
       MINIO_ROOT_USER: kb_admin
@@ -48,7 +48,6 @@ services:
     mem_limit: 1g
 
   elasticsearch:
-    build: ./config/es
     image: kb-es:8.15.0-ik
     container_name: kb-es
     environment:
@@ -81,16 +80,3 @@ services:
     restart: unless-stopped
     mem_limit: 2g
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: kb-ollama
-    environment:
-      - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_KEEP_ALIVE=5m
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./ollama/models:/root/.ollama
-    restart: unless-stopped
-    mem_limit: 16g
