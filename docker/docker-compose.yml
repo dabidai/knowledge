@@ -108,6 +108,7 @@ services:
 
   # ==================== AI 服务 ====================
   ai-service:
+    image: kb-ai:latest
     build:
       context: ../ai-service
       dockerfile: Dockerfile
@@ -130,6 +131,7 @@ services:
 
   # ==================== Java 后端 ====================
   backend:
+    image: kb-backend:latest
     build:
       context: ../backend
       dockerfile: Dockerfile.prebuilt
@@ -166,6 +168,7 @@ services:
 
   # ==================== 前端 ====================
   frontend:
+    image: kb-frontend:latest
     build:
       context: ../frontend
       dockerfile: Dockerfile
