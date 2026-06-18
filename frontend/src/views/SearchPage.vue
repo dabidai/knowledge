@@ -51,10 +51,9 @@
           <div class="source-name">{{ src.fileName }}</div>
           <div class="source-snippet" v-html="src.snippet || '无预览'"></div>
           <div class="source-meta">
-            <el-tag size="small">{{ src.deptName }}</el-tag>
-            <a :href="src.downloadUrl" target="_blank" v-if="src.downloadUrl">
-              <el-button size="small" type="primary" link>⬇ 下载</el-button>
-            </a>
+            <el-button size="small" type="primary" link @click="downloadFile(src.fileId, src.fileName)" v-if="src.fileId">
+              ⬇ 下载
+            </el-button>
           </div>
         </div>
       </el-card>
@@ -69,6 +68,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { searchApi } from '@/api'
+import http from '@/api'
+import { ElMessage } from 'element-plus'
 
 const query = ref('')
 const loading = ref(false)
@@ -86,6 +87,25 @@ const years = computed(() => {
   }
   return list
 })
+
+/** 通过后端代理下载文件（带 JWT 认证） */
+async function downloadFile(fileId: string, fileName: string) {
+  try {
+    const response = await http.get(`/browse/download/${fileId}`, {
+      responseType: 'blob',
+    })
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName || ''
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
 
 /** 执行搜索 */
 async function handleSearch() {

@@ -7,6 +7,7 @@ import com.knowledge.entity.User;
 import com.knowledge.repository.DocumentRepository;
 import com.knowledge.repository.ItemRepository;
 import com.knowledge.service.MinioService;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -140,6 +146,66 @@ public class BrowseController {
         } catch (Exception e) {
             log.error("获取文档失败: {}", fileId, e);
             return ApiResponse.error(500, "获取文档失败，请确认 MinIO 服务已启动且文档已导入");
+        }
+    }
+
+    /**
+     * 下载原始文档 —— 代理 MinIO 文件流，强制浏览器下载（而非内联打开）。
+     *
+     * @param fileId   文件ID（对应 Document.fileId 和 MinIO 中的对象路径）
+     * @param response HTTP 响应（用于流式写出文件）
+     */
+    @GetMapping("/download/{fileId}")
+    public void downloadDocument(@PathVariable String fileId,
+                                  HttpServletResponse response) throws IOException {
+        // 1. 查找文档记录获取元信息
+        Document doc = docRepo.findById(fileId).orElse(null);
+        String objectPath;
+        String downloadFileName;
+
+        if (doc != null && doc.getMinioPath() != null) {
+            objectPath = doc.getMinioPath();
+            downloadFileName = doc.getFileName();
+            // 提取纯文件名（去掉路径部分）
+            if (downloadFileName.contains("/")) {
+                downloadFileName = downloadFileName.substring(downloadFileName.lastIndexOf('/') + 1);
+            }
+        } else {
+            // 兼容旧数据：尝试用 fileId 直接构造路径
+            response.sendError(HttpServletResponse.SC_NOT_FOUND, "文档不存在: " + fileId);
+            return;
+        }
+
+        // 2. 从 MinIO 获取文件流
+        try (InputStream in = minioService.getDocumentStream(objectPath)) {
+            if (in == null) {
+                response.sendError(HttpServletResponse.SC_NOT_FOUND, "文件内容不存在");
+                return;
+            }
+
+            // 3. 设置响应头 —— 强制下载
+            String encodedName = URLEncoder.encode(downloadFileName, StandardCharsets.UTF_8)
+                    .replaceAll("\\+", "%20");
+            response.setContentType("application/octet-stream");
+            response.setHeader("Content-Disposition",
+                    "attachment; filename=\"" + encodedName
+                    + "\"; filename*=UTF-8''" + encodedName);
+            response.setCharacterEncoding("UTF-8");
+
+            // 4. 流式写出
+            try (OutputStream out = response.getOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, bytesRead);
+                }
+                out.flush();
+            }
+        } catch (Exception e) {
+            log.error("下载文档失败: fileId={}, objectPath={}", fileId, objectPath, e);
+            if (!response.isCommitted()) {
+                response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "下载失败");
+            }
         }
     }
 

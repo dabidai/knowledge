@@ -12,6 +12,11 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
+import io.minio.GetObjectArgs;
+import io.minio.GetObjectResponse;
+import io.minio.StatObjectArgs;
+import io.minio.StatObjectResponse;
+
 /** MinIO 文件存储服务 */
 @Slf4j
 @Service
@@ -78,6 +83,35 @@ public class MinioService {
         } catch (Exception e) {
             log.error("生成预签名 URL 失败: {}", objectPath, e);
             return null;
+        }
+    }
+
+    /** 获取原始文档流（用于下载代理） */
+    public InputStream getDocumentStream(String objectPath) {
+        try {
+            return minioClient.getObject(
+                    GetObjectArgs.builder()
+                            .bucket(bucketDocs)
+                            .object(objectPath)
+                            .build());
+        } catch (Exception e) {
+            log.error("读取文档失败: {}", objectPath, e);
+            return null;
+        }
+    }
+
+    /** 获取文档的 Content-Type（用于下载代理设置响应头） */
+    public String getDocumentContentType(String objectPath) {
+        try {
+            StatObjectResponse stat = minioClient.statObject(
+                    StatObjectArgs.builder()
+                            .bucket(bucketDocs)
+                            .object(objectPath)
+                            .build());
+            return stat.contentType();
+        } catch (Exception e) {
+            log.warn("获取文档 Content-Type 失败: {}, 使用默认值", objectPath);
+            return "application/octet-stream";
         }
     }
 

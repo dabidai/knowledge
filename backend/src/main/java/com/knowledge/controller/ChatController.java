@@ -44,6 +44,15 @@ public class ChatController {
     private final ItemRepository itemRepo;
     private final OpinionRepository opinionRepo;
 
+    /** 判断 AI 回答是否表明"未找到相关内容" */
+    private boolean isNoRelevantAnswer(String answer) {
+        if (answer == null || answer.isBlank()) return true;
+        String s = answer;
+        return s.contains("无法确定") || s.contains("没有相关") || s.contains("未找到")
+                || s.contains("不足以") || s.contains("没有找到")
+                || s.contains("暂无相关") || s.contains("无法回答");
+    }
+
     /**
      * 智能体对话 —— 多轮上下文 + RAG 检索增强。
      *
@@ -143,7 +152,12 @@ public class ChatController {
             // 8. 智能体对话（带历史 + RAG 上下文 + 结构化事项数据）
             String answer = aiClient.chat(question, contexts, history);
 
-            // 9. 保存 AI 回答
+            // 9. 如果 AI 回答表明未找到相关内容，清空来源文档列表
+            if (isNoRelevantAnswer(answer)) {
+                sources.clear();
+            }
+
+            // 10. 保存 AI 回答
             conversationService.addMessage(conversationId, "assistant", answer, sources);
 
             ChatResult result = ChatResult.builder()

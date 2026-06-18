@@ -27,6 +27,15 @@ public class SearchController {
     private final AIClient aiClient;
     private final MinioService minioService;
 
+    /** 判断 AI 回答是否表明"未找到相关内容" */
+    private boolean isNoRelevantAnswer(String answer) {
+        if (answer == null || answer.isBlank()) return true;
+        String s = answer;
+        return s.contains("无法确定") || s.contains("没有相关") || s.contains("未找到")
+                || s.contains("不足以") || s.contains("没有找到")
+                || s.contains("暂无相关") || s.contains("无法回答");
+    }
+
     /** 综合检索 —— 返回 RAG 答案 + 来源文档 + 下载链接，支持分类/年度/部门筛选 */
     @PostMapping
     @RateLimit(maxRequests = 30, windowSeconds = 60)
@@ -82,6 +91,12 @@ public class SearchController {
                 answer = aiClient.ask(query, contexts);
             } else {
                 answer = "未找到相关文档。";
+            }
+
+            // 5. 如果 AI 回答表明未找到相关内容，清空来源文档列表
+            //    避免出现"AI 说没有 + 下边却列出不相关文档"的体验问题
+            if (isNoRelevantAnswer(answer)) {
+                sources.clear();
             }
 
             SearchResult result = SearchResult.builder()

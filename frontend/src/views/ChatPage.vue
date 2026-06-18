@@ -39,7 +39,7 @@
 
     <!-- 右侧对话区 -->
     <div class="chat-main">
-      <div class="chat-messages" ref="messagesRef">
+      <div class="chat-messages" ref="messagesRef" @click="handleMessageClick">
         <div v-if="messages.length === 0 && !thinking" class="chat-welcome">
           <el-icon :size="48" color="#409EFF"><ChatDotRound /></el-icon>
           <h2>知识库智能助手</h2>
@@ -70,10 +70,9 @@
                   <div class="source-name">{{ src.fileName }}</div>
                   <div class="source-snippet" v-html="src.snippet || '无预览'"></div>
                   <div class="source-meta">
-                    <el-tag size="small">{{ src.deptName }}</el-tag>
-                    <a :href="src.downloadUrl" target="_blank" v-if="src.downloadUrl">
-                      <el-button size="small" type="primary">⬇ 下载原文</el-button>
-                    </a>
+                    <el-button size="small" type="primary" @click="downloadFile(src.fileId, src.fileName)" v-if="src.fileId">
+                      ⬇ 下载原文
+                    </el-button>
                     <span v-else style="color:#ccc;font-size:12px">(文件暂不可下载)</span>
                   </div>
                 </div>
@@ -115,6 +114,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted } from 'vue'
 import { chatApi, conversationApi } from '@/api'
+import http from '@/api'
 import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 
@@ -282,6 +282,37 @@ function sendQuick(q: string) {
   handleSend()
 }
 
+/** 通过后端代理下载文件（带 JWT 认证） */
+async function downloadFile(fileId: string, fileName: string) {
+  try {
+    const response = await http.get(`/browse/download/${fileId}`, {
+      responseType: 'blob',
+    })
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName || ''
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+
+/** 拦截消息区内的下载链接点击，用 axios（带 JWT）下载 */
+function handleMessageClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.tagName === 'A' && target.getAttribute('href')?.startsWith('/api/browse/download/')) {
+    e.preventDefault()
+    const href = target.getAttribute('href')!
+    const fileId = href.split('/').pop()!
+    const fileName = target.getAttribute('download') || target.textContent || ''
+    downloadFile(fileId, fileName)
+  }
+}
+
 async function scrollBottom() {
   await nextTick()
   if (messagesRef.value) {
@@ -293,10 +324,10 @@ function renderMd(text: string, sources?: any[]) {
   let html = md.render(text || '')
   if (sources && sources.length > 0) {
     for (const src of sources) {
-      if (!src.fileName || !src.downloadUrl) continue
+      if (!src.fileName || !src.fileId) continue
       const name = src.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const regex = new RegExp(`(${name})`, 'gi')
-      const link = `<a href="${src.downloadUrl}" target="_blank" title="下载: ${src.fileName}">$1</a>`
+      const link = `<a href="/api/browse/download/${src.fileId}" download="${src.fileName}" title="下载: ${src.fileName}">$1</a>`
       html = html.replace(regex, link)
     }
   }
