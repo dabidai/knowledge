@@ -41,6 +41,8 @@ public class DocumentParser {
             return parseOfd(filePath);
         } else if (fileName.endsWith(".wps")) {
             return parseWps(filePath);
+        } else if (fileName.endsWith(".txt")) {
+            return parseTxt(filePath);
         } else {
             throw new IllegalArgumentException("不支持的文件格式: " + fileName);
         }
@@ -201,6 +203,11 @@ public class DocumentParser {
             log.error("WPS 解析失败: {}", filePath, e);
             return "[WPS 文档 — 解析失败] " + filePath.getFileName();
         }
+    }
+
+    /** 解析 .txt 纯文本文件 */
+    private String parseTxt(Path filePath) throws IOException {
+        return java.nio.file.Files.readString(filePath);
     }
 
     /** 递归提取 XML 节点中的文本 */

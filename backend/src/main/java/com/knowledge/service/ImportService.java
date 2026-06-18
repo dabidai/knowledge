@@ -139,7 +139,7 @@ public class ImportService {
                 } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.putIfAbsent("user", p);
                 } else if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps") || name.endsWith(".txt")) {
                     docFiles.add(p);
                 }
             }
@@ -262,7 +262,7 @@ public class ImportService {
                 } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.put("user", p);
                 } else if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps") || name.endsWith(".txt")) {
                     docFiles.add(p);
                 }
             }
@@ -386,7 +386,7 @@ public class ImportService {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
                 if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps") || name.endsWith(".txt")) {
                     String baseName = extractBaseName(name);
                     // 跳过已处理的文件
                     if (!processedNames.contains(p.getFileName().toString())
@@ -694,6 +694,7 @@ public class ImportService {
         if (ext.endsWith(".doc")) return "application/msword";
         if (ext.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (ext.endsWith(".ofd")) return "application/vnd.ofd";
+        if (ext.endsWith(".txt")) return "text/plain";
         return "application/octet-stream";
     }
 
