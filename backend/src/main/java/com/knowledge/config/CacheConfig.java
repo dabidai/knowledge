@@ -1,6 +1,7 @@
 package com.knowledge.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -35,11 +36,15 @@ public class CacheConfig {
      */
     @Bean
     public RedisCacheConfiguration defaultCacheConfig(ObjectMapper objectMapper) {
-        // GenericJackson2JsonRedisSerializer 会在 JSON 中写入 @class 类型信息，
-        // 反序列化时能还原为原始类型（如 ApiResponse<GraphData>），
-        // 避免 LinkedHashMap 无法强转为 ApiResponse 的 ClassCastException
+        // 必须复制 ObjectMapper 并开启 DefaultTyping，否则传入 GenericJackson2JsonRedisSerializer 的
+        // 自定义 mapper 不会自动写入 @class 类型信息，反序列化时会得到 LinkedHashMap 而非原始类型
+        ObjectMapper cacheMapper = objectMapper.copy();
+        cacheMapper.activateDefaultTyping(
+                BasicPolymorphicTypeValidator.builder().allowIfBaseType(Object.class).build(),
+                ObjectMapper.DefaultTyping.NON_FINAL);
+
         GenericJackson2JsonRedisSerializer serializer =
-                new GenericJackson2JsonRedisSerializer(objectMapper);
+                new GenericJackson2JsonRedisSerializer(cacheMapper);
 
         return RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofHours(1))
