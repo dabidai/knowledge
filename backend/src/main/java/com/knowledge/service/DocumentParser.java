@@ -7,6 +7,9 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
+import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.*;
 import javax.xml.parsers.*;
@@ -27,14 +30,19 @@ import java.util.zip.ZipFile;
 @Component
 public class DocumentParser {
 
+    static {
+        // 放宽 ZIP bomb 检测 —— 有些合法 docx/ofd 内嵌压缩率极高的 emf/wmf 图片
+        ZipSecureFile.setMinInflateRatio(0.001);
+    }
+
     /** 解析文档为纯文本 */
     public String parse(Path filePath) throws IOException {
         String fileName = filePath.getFileName().toString().toLowerCase();
 
         if (fileName.endsWith(".doc")) {
-            return parseDoc(filePath);
+            return parseDocOrDocx(filePath, false);
         } else if (fileName.endsWith(".docx")) {
-            return parseDocx(filePath);
+            return parseDocOrDocx(filePath, true);
         } else if (fileName.endsWith(".pdf")) {
             return parsePdf(filePath);
         } else if (fileName.endsWith(".ofd")) {
@@ -48,22 +56,38 @@ public class DocumentParser {
         }
     }
 
-    /** 解析 .doc (旧格式) */
-    private String parseDoc(Path filePath) throws IOException {
-        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
-             HWPFDocument doc = new HWPFDocument(is);
-             WordExtractor extractor = new WordExtractor(doc)) {
-            return extractor.getText();
+    /**
+     * 解析 .doc 或 .docx —— 兼容格式与实际内容不一致的情况。
+     * 实际中很多 .doc 文件其实是 OOXML，反之亦然。
+     */
+    private String parseDocOrDocx(Path filePath, boolean preferDocx) throws IOException {
+        try {
+            if (preferDocx) {
+                return tryParseWithOOXML(filePath);
+            } else {
+                return tryParseWithOLE2(filePath);
+            }
+        } catch (Exception e) {
+            log.debug("首选格式解析失败，尝试另一种格式: {}", filePath.getFileName());
+            try {
+                if (preferDocx) {
+                    return tryParseWithOLE2(filePath);
+                } else {
+                    return tryParseWithOOXML(filePath);
+                }
+            } catch (Exception e2) {
+                log.error("文档解析失败: {} ({})", filePath.getFileName(), e2.getMessage());
+                return "[文档解析失败 — " + e2.getMessage() + "] " + filePath.getFileName();
+            }
         }
     }
 
-    /** 解析 .docx */
-    private String parseDocx(Path filePath) throws IOException {
-        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
-             XWPFDocument doc = new XWPFDocument(is)) {
+    /** 按 OOXML (docx) 格式解析 */
+    private String tryParseWithOOXML(Path filePath) throws IOException {
+        try (OPCPackage pkg = OPCPackage.open(filePath.toFile());
+             XWPFDocument doc = new XWPFDocument(pkg)) {
             StringBuilder sb = new StringBuilder();
             doc.getParagraphs().forEach(p -> sb.append(p.getText()).append("\n"));
-            // 提取表格内容
             doc.getTables().forEach(table -> {
                 sb.append("\n[表格]\n");
                 table.getRows().forEach(row -> {
@@ -73,6 +97,16 @@ public class DocumentParser {
                 });
             });
             return sb.toString();
+        }
+    }
+
+    /** 按 OLE2 (.doc) 格式解析 */
+    private String tryParseWithOLE2(Path filePath) throws IOException {
+        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
+             POIFSFileSystem fs = new POIFSFileSystem(is);
+             HWPFDocument doc = new HWPFDocument(fs);
+             WordExtractor extractor = new WordExtractor(doc)) {
+            return extractor.getText();
         }
     }
 

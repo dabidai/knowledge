@@ -37,23 +37,29 @@ public class ElasticsearchService {
         ));
     }
 
-    /** 批量索引 */
+    /** 分批批量索引 —— 每批最多 200 条，避免 OFD 大文件触发 ES 413 错误 */
     public void bulkIndex(List<DocIndex> docs) throws IOException {
-        BulkRequest.Builder br = new BulkRequest.Builder();
-        for (DocIndex doc : docs) {
-            br.operations(op -> op
-                    .index(idx -> idx
-                            .index(indexName)
-                            .id(doc.docId + "_" + doc.chunkIndex)
-                            .document(doc)
-                    )
-            );
+        int batchSize = 200;
+        for (int i = 0; i < docs.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, docs.size());
+            List<DocIndex> batch = docs.subList(i, end);
+            BulkRequest.Builder br = new BulkRequest.Builder();
+            for (DocIndex doc : batch) {
+                br.operations(op -> op
+                        .index(idx -> idx
+                                .index(indexName)
+                                .id(doc.docId + "_" + doc.chunkIndex)
+                                .document(doc)
+                        )
+                );
+            }
+            BulkResponse resp = esClient.bulk(br.build());
+            if (resp.errors()) {
+                log.error("ES 批量索引有错误 (batch {}-{}): {}", i, end, resp.items().size());
+            }
         }
-        BulkResponse resp = esClient.bulk(br.build());
-        if (resp.errors()) {
-            log.error("ES 批量索引有错误: {}", resp.items().size());
-        }
-        log.info("ES 批量索引完成: {} 条", docs.size());
+        log.info("ES 批量索引完成: {} 条 ({} batches)", docs.size(),
+                (int) Math.ceil(docs.size() / (double) batchSize));
     }
 
     /**
