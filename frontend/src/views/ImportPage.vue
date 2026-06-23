@@ -114,7 +114,7 @@
       <template #footer>
         <el-button @click="browserVisible = false">取消</el-button>
         <el-button type="primary" @click="selectCurrentDir" :disabled="browserCurrent === importRoot">
-          <el-icon><FolderChecked /></el-icon> 选择当前目录
+          <el-icon><CircleCheck /></el-icon> 选择当前目录
         </el-button>
       </template>
     </el-dialog>
@@ -124,7 +124,7 @@
 import { ref, reactive, computed } from 'vue'
 import { importApi } from '@/api'
 import { ElMessage } from 'element-plus'
-import { Folder, Document, FolderOpened, FolderChecked, Upload, UploadFilled } from '@element-plus/icons-vue'
+import { Folder, Document, FolderOpened, CircleCheck, Upload, UploadFilled } from '@element-plus/icons-vue'
 
 const mode = ref('upload')
 const pathMode = ref('file')
