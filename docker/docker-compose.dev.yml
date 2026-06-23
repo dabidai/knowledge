@@ -13,7 +13,7 @@ services:
     environment:
       POSTGRES_DB: knowledge
       POSTGRES_USER: kb_user
-      POSTGRES_PASSWORD: kb_pass
+      POSTGRES_PASSWORD: 12345678
     ports:
       - "5432:5432"
     volumes:
@@ -37,7 +37,7 @@ services:
     container_name: kb-minio
     environment:
       MINIO_ROOT_USER: kb_admin
-      MINIO_ROOT_PASSWORD: kb_pass123
+      MINIO_ROOT_PASSWORD: 12345678
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -54,6 +54,7 @@ services:
       - discovery.type=single-node
       - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
       - xpack.security.enabled=false
+      - http.max_content_length=500mb
     ports:
       - "9200:9200"
     volumes:
@@ -69,7 +70,7 @@ services:
     image: neo4j:5-community
     container_name: kb-neo4j
     environment:
-      NEO4J_AUTH: neo4j/neo4j_pass
+      NEO4J_AUTH: neo4j/12345678
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1g
     ports:
