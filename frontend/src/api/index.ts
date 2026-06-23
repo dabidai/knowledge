@@ -84,8 +84,7 @@ export const importApi = {
     http.get('/import/browse-dir', { params: path ? { path } : {} }),
 }
 
-  browseDir: (path?: string) =>
-    http.get('/import/browse-dir', { params: path ? { path } : {} }),
+export const browseApi = {
   tree: () => http.get('/browse/tree'),
   doc: (fileId: string) => http.get(`/browse/doc/${fileId}`),
 }
