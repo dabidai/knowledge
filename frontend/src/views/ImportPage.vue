@@ -48,8 +48,11 @@
             </el-form-item>
             <el-form-item label="服务器路径">
               <el-input v-model="serverPath" :placeholder="pathMode === 'file'
-                ? '例如: F:/code/knowledge/input/test.zip'
-                : '例如: F:/code/knowledge/input/docs/'" />
+                ? '例如: /data/documents/test.zip'
+                : '例如: /data/documents/2024年文件/'" />
+              <el-button style="margin-left:8px" @click="openBrowser">
+                <el-icon><FolderOpened /></el-icon> 浏览
+              </el-button>
               <div class="el-upload__tip" style="margin-top:4px">
                 <template v-if="pathMode === 'file'">输入压缩包路径（zip/7z/tar），支持大文件</template>
                 <template v-else>输入文件夹路径，自动扫描目录下所有文档（pdf/doc/docx/ofd/wps）</template>
@@ -73,13 +76,55 @@
         <el-alert v-if="progress.errors" type="error" :title="progress.errors" style="margin-top:12px" />
       </div>
     </el-card>
-  </div>
+
+    <!-- 目录浏览弹窗 -->
+    <el-dialog v-model="browserVisible" title="浏览服务器目录" width="600px">
+      <div style="margin-bottom:8px;color:#999">当前: {{ browserCurrent }}</div>
+
+      <el-table :data="browserEntries" @row-dblclick="handleBrowserClick" highlight-current-row
+        max-height="400" size="small">
+        <el-table-column label="名称" prop="name">
+          <template #default="{ row }">
+            <el-icon v-if="row.isDir" style="margin-right:4px;color:#409EFF">
+              <Folder />
+            </el-icon>
+            <el-icon v-else style="margin-right:4px;color:#67C23A">
+              <Document />
+            </el-icon>
+            {{ row.name }}
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="80">
+          <template #default="{ row }">
+            {{ row.isDir ? '目录' : '文件' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button v-if="row.isDir" size="small" @click="handleBrowserClick(row)">
+              进入
+            </el-button>
+            <el-button v-else size="small" @click="selectBrowserPath(row)">
+              选择
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <template #footer>
+        <el-button @click="browserVisible = false">取消</el-button>
+        <el-button type="primary" @click="selectCurrentDir" :disabled="browserCurrent === importRoot">
+          <el-icon><FolderChecked /></el-icon> 选择当前目录
+        </el-button>
+      </template>
+    </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
 import { importApi } from '@/api'
 import { ElMessage } from 'element-plus'
+import { Folder, Document, FolderOpened, FolderChecked, Upload, UploadFilled } from '@element-plus/icons-vue'
 
 const mode = ref('upload')
 const pathMode = ref('file')
@@ -92,6 +137,48 @@ const progressLoading = ref(false)
 const progress = reactive({
   status: '', totalFiles: 0, processedFiles: 0, percent: 0, errors: ''
 })
+
+// ========== 目录浏览器 ==========
+const browserVisible = ref(false)
+const browserCurrent = ref('')
+const browserEntries = ref<any[]>([])
+const importRoot = ref('')
+
+async function openBrowser() {
+  browserVisible.value = true
+  // 如果 serverPath 已有值，从该路径浏览；否则从根目录
+  await loadBrowserDir(serverPath.value.trim())
+}
+
+async function loadBrowserDir(path: string) {
+  try {
+    const res = await importApi.browseDir(path || '')
+    const data = res.data.data as any
+    importRoot.value = data.root?.name || ''
+    browserCurrent.value = data.current || ''
+    browserEntries.value = data.entries || []
+  } catch {
+    ElMessage.error('读取目录失败')
+  }
+}
+
+function handleBrowserClick(row: any) {
+  if (row.isDir) {
+    loadBrowserDir(row.path)
+  }
+}
+
+function selectBrowserPath(row: any) {
+  // 选择了文件：填入路径
+  serverPath.value = importRoot.value + '/' + row.path
+  browserVisible.value = false
+}
+
+function selectCurrentDir() {
+  // 选择当前浏览的目录作为导入目标
+  serverPath.value = browserCurrent.value
+  browserVisible.value = false
+}
 
 const progressStatus = computed(() => {
   if (progress.status === 'complete') return 'success'

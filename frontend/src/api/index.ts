@@ -80,9 +80,12 @@ export const importApi = {
     http.delete(`/import/tasks/${batchId}`),
   retryTask: (batchId: string) =>
     http.post(`/import/tasks/${batchId}/retry`),
+  browseDir: (path?: string) =>
+    http.get('/import/browse-dir', { params: path ? { path } : {} }),
 }
 
-export const browseApi = {
+  browseDir: (path?: string) =>
+    http.get('/import/browse-dir', { params: path ? { path } : {} }),
   tree: () => http.get('/browse/tree'),
   doc: (fileId: string) => http.get(`/browse/doc/${fileId}`),
 }

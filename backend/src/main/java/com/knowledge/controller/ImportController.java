@@ -6,12 +6,14 @@ import com.knowledge.entity.ImportTask;
 import com.knowledge.repository.ImportTaskRepository;
 import com.knowledge.service.ImportService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
-import java.util.Map;
+import java.nio.file.*;
+import java.util.*;
+import java.util.stream.Stream;
 
 /** 文档导入控制器 */
 @RestController
@@ -21,6 +23,91 @@ public class ImportController {
 
     private final ImportService importService;
     private final ImportTaskRepository taskRepo;
+
+    @Value("${document.import-root-dir}")
+    private String importRootDir;
+
+    /** 浏览服务器目录，返回子目录列表（前端文件夹选择器用） */
+    @GetMapping("/browse-dir")
+    public ApiResponse<List<Map<String, Object>>> browseDir(
+            @RequestParam(defaultValue = "") String path) {
+        try {
+            Path root = Path.of(importRootDir).toRealPath().normalize();
+            Path dir = path.isEmpty() ? root : root.resolve(path).normalize();
+
+            // 安全检查：不离开根目录
+            if (!dir.startsWith(root)) {
+                return ApiResponse.error(403, "不允许访问根目录以外的路径");
+            }
+            if (!Files.isDirectory(dir)) {
+                return ApiResponse.error(400, "不是有效目录");
+            }
+
+            List<Map<String, Object>> entries = new ArrayList<>();
+
+            // 添加父目录（如果不在根目录）
+            if (!dir.equals(root)) {
+                Map<String, Object> parent = new LinkedHashMap<>();
+                parent.put("name", "..");
+                Path parentRel = root.relativize(dir.getParent());
+                parent.put("path", parentRel.toString().replace('\\', '/'));
+                parent.put("isDir", true);
+                entries.add(parent);
+            }
+
+            try (Stream<Path> stream = Files.list(dir)) {
+                stream.sorted((a, b) -> {
+                    // 目录优先，然后按名称排序
+                    boolean aDir = Files.isDirectory(a);
+                    boolean bDir = Files.isDirectory(b);
+                    if (aDir && !bDir) return -1;
+                    if (!aDir && bDir) return 1;
+                    return a.getFileName().toString().compareToIgnoreCase(
+                            b.getFileName().toString());
+                }).forEach(p -> {
+                    String name = p.getFileName().toString();
+                    // 只列目录和文档文件
+                    if (name.startsWith(".")) return;
+                    boolean isDir = Files.isDirectory(p);
+                    if (!isDir) {
+                        String lower = name.toLowerCase();
+                        if (!lower.endsWith(".pdf") && !lower.endsWith(".doc")
+                                && !lower.endsWith(".docx") && !lower.endsWith(".ofd")
+                                && !lower.endsWith(".wps") && !lower.endsWith(".txt")
+                                && !lower.endsWith(".zip") && !lower.endsWith(".7z")
+                                && !lower.endsWith(".tar") && !lower.endsWith(".gz")
+                                && !lower.endsWith(".csv") && !lower.endsWith(".xlsx")) {
+                            return;
+                        }
+                    }
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("name", name);
+                    Path rel = root.relativize(p);
+                    entry.put("path", rel.toString().replace('\\', '/'));
+                    entry.put("isDir", isDir);
+                    if (!isDir) {
+                        try {
+                            entry.put("size", Files.size(p));
+                        } catch (Exception ignored) {}
+                    }
+                    entries.add(entry);
+                });
+            }
+
+            Map<String, Object> rootInfo = new LinkedHashMap<>();
+            rootInfo.put("name", root.toString());
+            rootInfo.put("path", "");
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("root", rootInfo);
+            result.put("current", dir.toString());
+            result.put("entries", entries);
+
+            return ApiResponse.ok((List<Map<String, Object>>) (Object) result);
+        } catch (Exception e) {
+            return ApiResponse.error(500, "读取目录失败: " + e.getMessage());
+        }
+    }
 
     /** 上传压缩包并导入，导入成功后清除所有相关缓存 */
     @PostMapping("/upload")
