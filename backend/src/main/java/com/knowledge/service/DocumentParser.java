@@ -38,21 +38,24 @@ public class DocumentParser {
     /** 解析文档为纯文本 */
     public String parse(Path filePath) throws IOException {
         String fileName = filePath.getFileName().toString().toLowerCase();
-
-        if (fileName.endsWith(".doc")) {
-            return parseDocOrDocx(filePath, false);
-        } else if (fileName.endsWith(".docx")) {
-            return parseDocOrDocx(filePath, true);
-        } else if (fileName.endsWith(".pdf")) {
-            return parsePdf(filePath);
-        } else if (fileName.endsWith(".ofd")) {
-            return parseOfd(filePath);
-        } else if (fileName.endsWith(".wps")) {
-            return parseWps(filePath);
-        } else if (fileName.endsWith(".txt")) {
-            return parseTxt(filePath);
-        } else {
-            throw new IllegalArgumentException("不支持的文件格式: " + fileName);
+        try {
+            if (fileName.endsWith(".doc")) {
+                return parseDocOrDocx(filePath, false);
+            } else if (fileName.endsWith(".docx")) {
+                return parseDocOrDocx(filePath, true);
+            } else if (fileName.endsWith(".pdf")) {
+                return parsePdf(filePath);
+            } else if (fileName.endsWith(".ofd")) {
+                return parseOfd(filePath);
+            } else if (fileName.endsWith(".wps")) {
+                return parseWps(filePath);
+            } else if (fileName.endsWith(".txt")) {
+                return parseTxt(filePath);
+            } else {
+                throw new IllegalArgumentException("不支持的文件格式: " + fileName);
+            }
+        } catch (Exception e) {
+            throw new IOException("解析失败: " + filePath.getFileName(), e);
         }
     }
 
@@ -83,7 +86,7 @@ public class DocumentParser {
     }
 
     /** 按 OOXML (docx) 格式解析 */
-    private String tryParseWithOOXML(Path filePath) throws IOException {
+    private String tryParseWithOOXML(Path filePath) throws Exception {
         try (OPCPackage pkg = OPCPackage.open(filePath.toFile());
              XWPFDocument doc = new XWPFDocument(pkg)) {
             StringBuilder sb = new StringBuilder();
