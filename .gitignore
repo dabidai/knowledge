@@ -29,3 +29,5 @@ ai-service/ai-models/
 *.csv
 *.xlsx
 *.PDF
+*.tar
+*.ps1
