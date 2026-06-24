@@ -31,6 +31,9 @@
           <el-menu-item index="/users" v-if="authStore.isAdmin">
             <el-icon><User /></el-icon> 用户管理
           </el-menu-item>
+          <el-menu-item index="/departments" v-if="authStore.isAdmin">
+            <el-icon><OfficeBuilding /></el-icon> 部门管理
+          </el-menu-item>
           <el-menu-item index="/history">
             <el-icon><Clock /></el-icon> 导入历史
           </el-menu-item>

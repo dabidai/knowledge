@@ -44,9 +44,10 @@ public class SecurityConfig {
                 .requestMatchers("/api/health/**").permitAll()
                 .requestMatchers("/api/users/init").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                // admin 端点
-                .requestMatchers("/api/users/**").hasRole("ADMIN")
+                // admin 端点（GET 部门列表所有登录用户可用）
+                .requestMatchers(HttpMethod.GET, "/api/departments").authenticated()
                 .requestMatchers("/api/departments/**").hasRole("ADMIN")
+                .requestMatchers("/api/users/**").hasRole("ADMIN")
                 // 其他所有端点需要认证
                 .anyRequest().authenticated()
             )

@@ -103,6 +103,7 @@ export const userApi = {
 export const deptApi = {
   list: () => http.get('/departments'),
   create: (name: string) => http.post('/departments', { name }),
+  delete: (id: number) => http.delete(`/departments/${id}`),
 }
 
 export default http

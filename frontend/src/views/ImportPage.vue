@@ -10,9 +10,10 @@
             <el-form-item label="目标位置">
               <el-radio-group v-model="target">
                 <el-radio value="public">公共区</el-radio>
-                <el-radio value="信息技术部">信息技术部</el-radio>
-                <el-radio value="办公室">办公室</el-radio>
-                <el-radio value="研究室">研究室</el-radio>
+                <el-radio v-for="d in departments" :key="d.id" :value="d.name"
+                  :disabled="!authStore.isAdmin && d.name !== authStore.user?.deptName">
+                  {{ d.name }}
+                </el-radio>
               </el-radio-group>
             </el-form-item>
             <el-form-item label="选择文件">
@@ -35,9 +36,10 @@
             <el-form-item label="目标位置">
               <el-radio-group v-model="target">
                 <el-radio value="public">公共区</el-radio>
-                <el-radio value="信息技术部">信息技术部</el-radio>
-                <el-radio value="办公室">办公室</el-radio>
-                <el-radio value="研究室">研究室</el-radio>
+                <el-radio v-for="d in departments" :key="d.id" :value="d.name"
+                  :disabled="!authStore.isAdmin && d.name !== authStore.user?.deptName">
+                  {{ d.name }}
+                </el-radio>
               </el-radio-group>
             </el-form-item>
             <el-form-item label="导入模式">
@@ -121,11 +123,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
-import { importApi } from '@/api'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { importApi, deptApi } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
 import { Folder, Document, FolderOpened, CircleCheck, Upload, UploadFilled } from '@element-plus/icons-vue'
 
+const authStore = useAuthStore()
 const mode = ref('upload')
 const pathMode = ref('file')
 const target = ref('public')
@@ -134,8 +138,20 @@ const file = ref<File | null>(null)
 const serverPath = ref('')
 const batchId = ref('')
 const progressLoading = ref(false)
+const departments = ref<{ id: number; name: string }[]>([])
 const progress = reactive({
   status: '', totalFiles: 0, processedFiles: 0, percent: 0, errors: ''
+})
+
+onMounted(async () => {
+  try {
+    const res = await deptApi.list()
+    departments.value = res.data.data || []
+    // admin 默认选公共区，普通用户默认选自己的部门
+    if (!authStore.isAdmin && authStore.user?.deptName) {
+      target.value = authStore.user.deptName
+    }
+  } catch { /* 部门加载失败则只显示公共区 */ }
 })
 
 // ========== 目录浏览器 ==========
