@@ -82,6 +82,11 @@
     <!-- 目录浏览弹窗 -->
     <el-dialog v-model="browserVisible" title="浏览服务器目录" width="600px">
       <div style="margin-bottom:8px;color:#999">当前: {{ browserCurrent }}</div>
+      <div style="margin-bottom:8px">
+        <el-button v-if="browserCurrent !== '/'" size="small" @click="goToParent">
+          <el-icon><Back /></el-icon> 返回上级
+        </el-button>
+      </div>
 
       <el-table :data="browserEntries" @row-dblclick="handleBrowserClick" highlight-current-row
         max-height="400" size="small">
@@ -128,7 +133,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { importApi, deptApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
-import { Folder, Document, FolderOpened, CircleCheck, Upload, UploadFilled } from '@element-plus/icons-vue'
+import { Folder, Document, FolderOpened, CircleCheck, Upload, UploadFilled, Back } from '@element-plus/icons-vue'
 
 const authStore = useAuthStore()
 const mode = ref('upload')
@@ -183,6 +188,11 @@ function handleBrowserClick(row: any) {
   if (row.isDir) {
     loadBrowserDir(row.path)
   }
+}
+
+function goToParent() {
+  const parent = browserEntries.value.find(e => e.name === '..')
+  if (parent) loadBrowserDir(parent.path)
 }
 
 function selectBrowserPath(row: any) {
