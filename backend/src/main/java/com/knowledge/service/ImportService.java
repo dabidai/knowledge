@@ -131,8 +131,8 @@ public class ImportService {
             }
         }
 
-        if (docFiles.isEmpty()) {
-            throw new IllegalArgumentException("目录中未找到支持的文档文件: " + dirPath);
+        if (docFiles.isEmpty() && csvFiles.isEmpty()) {
+            throw new IllegalArgumentException("目录中未找到支持的文档或CSV文件: " + dirPath);
         }
 
         // 创建导入任务
@@ -141,7 +141,7 @@ public class ImportService {
                 .archiveName("目录: " + dirPath.getFileName())
                 .targetDept(targetDept)
                 .status("metadata_parsed")
-                .totalFiles(csvFiles.size() + docFiles.size())
+                .totalFiles(Math.max(csvFiles.size(), 1) + docFiles.size())
                 .build();
         taskRepo.save(task);
 
