@@ -370,3 +370,32 @@ mvn test                           # ❌
 - [ ] 所有第三方 API Key 走环境变量，前端不暴露
 - [ ] License 文件存在
 - [ ] 第三方依赖在 README 中列明
+
+---
+
+## @AGENTS.md
+
+详细项目背景、运维命令、常见错误排查见 [AGENTS.md](AGENTS.md)。
+
+## 十、服务器运维命令
+
+```bash
+# 后端编译 + 启动
+cd /home/ubantu/llm/docker/anythingllm/knowledge/backend
+mvn package -DskipTests -q
+kill $(ss -tlnp | grep 8080 | grep -oP 'pid=\K\d+') 2>/dev/null
+nohup java -jar target/knowledge-base-0.1.0.jar > app.log 2>&1 &
+sleep 3 && ss -tlnp | grep 8080
+
+# 前端启动
+cd /home/ubantu/llm/docker/anythingllm/knowledge/frontend
+kill $(ss -tlnp | grep 3000 | grep -oP 'pid=\K\d+') 2>/dev/null
+nohup npm run dev -- --host > frontend.log 2>&1 &
+
+# 拉取更新
+cd /home/ubantu/llm/docker/anythingllm/knowledge && git pull gitee master
+
+# 查看状态
+ss -tlnp | grep -E '8080|3000'
+tail -50 /home/ubantu/llm/docker/anythingllm/knowledge/backend/app.log
+```
