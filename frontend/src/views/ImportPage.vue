@@ -186,8 +186,8 @@ function handleBrowserClick(row: any) {
 }
 
 function selectBrowserPath(row: any) {
-  // 选择了文件：填入路径
-  serverPath.value = importRoot.value + '/' + row.path
+  // 选择了文件：填入路径（后端已返回绝对路径）
+  serverPath.value = row.path
   browserVisible.value = false
 }
 

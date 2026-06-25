@@ -27,17 +27,20 @@ public class ImportController {
     @Value("${document.import-root-dir}")
     private String importRootDir;
 
-    /** 浏览服务器目录，返回子目录列表（前端文件夹选择器用） */
+    /** 浏览服务器目录（从根目录开始），返回子目录列表（前端文件夹选择器用） */
     @GetMapping("/browse-dir")
     public ApiResponse<Map<String, Object>> browseDir(
             @RequestParam(defaultValue = "") String path) {
         try {
-            Path root = Path.of(importRootDir).toRealPath().normalize();
-            Path dir = path.isEmpty() ? root : root.resolve(path).normalize();
+            Path root = Path.of("/").toRealPath().normalize();
+            Path dir = path.isBlank() ? root : Path.of(path).normalize();
 
-            // 安全检查：不离开根目录
+            // 安全检查：防止目录穿越
             if (!dir.startsWith(root)) {
                 return ApiResponse.error(403, "不允许访问根目录以外的路径");
+            }
+            if (!Files.exists(dir)) {
+                return ApiResponse.error(404, "路径不存在");
             }
             if (!Files.isDirectory(dir)) {
                 return ApiResponse.error(400, "不是有效目录");
@@ -49,15 +52,13 @@ public class ImportController {
             if (!dir.equals(root)) {
                 Map<String, Object> parent = new LinkedHashMap<>();
                 parent.put("name", "..");
-                Path parentRel = root.relativize(dir.getParent());
-                parent.put("path", parentRel.toString().replace('\\', '/'));
+                parent.put("path", dir.getParent().toString().replace('\\', '/'));
                 parent.put("isDir", true);
                 entries.add(parent);
             }
 
             try (Stream<Path> stream = Files.list(dir)) {
                 stream.sorted((a, b) -> {
-                    // 目录优先，然后按名称排序
                     boolean aDir = Files.isDirectory(a);
                     boolean bDir = Files.isDirectory(b);
                     if (aDir && !bDir) return -1;
@@ -66,7 +67,6 @@ public class ImportController {
                             b.getFileName().toString());
                 }).forEach(p -> {
                     String name = p.getFileName().toString();
-                    // 只列目录和文档文件
                     if (name.startsWith(".")) return;
                     boolean isDir = Files.isDirectory(p);
                     if (!isDir) {
@@ -82,8 +82,7 @@ public class ImportController {
                     }
                     Map<String, Object> entry = new LinkedHashMap<>();
                     entry.put("name", name);
-                    Path rel = root.relativize(p);
-                    entry.put("path", rel.toString().replace('\\', '/'));
+                    entry.put("path", p.toString().replace('\\', '/'));
                     entry.put("isDir", isDir);
                     if (!isDir) {
                         try {
@@ -95,8 +94,8 @@ public class ImportController {
             }
 
             Map<String, Object> rootInfo = new LinkedHashMap<>();
-            rootInfo.put("name", root.toString());
-            rootInfo.put("path", "");
+            rootInfo.put("name", "/");
+            rootInfo.put("path", "/");
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("root", rootInfo);
