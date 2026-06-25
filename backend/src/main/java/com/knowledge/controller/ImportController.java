@@ -29,7 +29,7 @@ public class ImportController {
 
     /** 浏览服务器目录，返回子目录列表（前端文件夹选择器用） */
     @GetMapping("/browse-dir")
-    public ApiResponse<List<Map<String, Object>>> browseDir(
+    public ApiResponse<Map<String, Object>> browseDir(
             @RequestParam(defaultValue = "") String path) {
         try {
             Path root = Path.of(importRootDir).toRealPath().normalize();
@@ -103,7 +103,7 @@ public class ImportController {
             result.put("current", dir.toString());
             result.put("entries", entries);
 
-            return ApiResponse.ok((List<Map<String, Object>>) (Object) result);
+            return ApiResponse.ok(result);
         } catch (Exception e) {
             return ApiResponse.error(500, "读取目录失败: " + e.getMessage());
         }
