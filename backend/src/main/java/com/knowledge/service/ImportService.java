@@ -116,12 +116,13 @@ public class ImportService {
         try (var stream = Files.walk(dirPath, 16)) {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
-                if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                // 注意：item_with_opinions 必须在 item 之前匹配，避免前缀冲突
+                if (name.startsWith("item_with_opinions") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                    csvFiles.putIfAbsent("opinions", p);
+                } else if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.putIfAbsent("item", p);
                 } else if (name.startsWith("file_index") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.putIfAbsent("file_index", p);
-                } else if (name.startsWith("item_with_opinions") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
-                    csvFiles.putIfAbsent("opinions", p);
                 } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.putIfAbsent("user", p);
                 } else if (name.endsWith(".doc") || name.endsWith(".docx")
@@ -240,7 +241,9 @@ public class ImportService {
         try (var stream = Files.walk(extractDir, 16)) {
             for (Path p : stream.filter(Files::isRegularFile).toList()) {
                 String name = p.getFileName().toString().toLowerCase();
-                if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                if (name.startsWith("item_with_opinions") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
+                    csvFiles.put("opinions", p);
+                } else if (name.startsWith("item") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.put("item", p);
                 } else if (name.startsWith("file_index") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.put("file_index", p);
