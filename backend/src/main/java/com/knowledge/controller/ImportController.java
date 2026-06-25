@@ -6,7 +6,6 @@ import com.knowledge.entity.ImportTask;
 import com.knowledge.repository.ImportTaskRepository;
 import com.knowledge.service.ImportService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,9 +22,6 @@ public class ImportController {
 
     private final ImportService importService;
     private final ImportTaskRepository taskRepo;
-
-    @Value("${document.import-root-dir}")
-    private String importRootDir;
 
     /** 浏览服务器目录（从根目录开始），返回子目录列表（前端文件夹选择器用） */
     @GetMapping("/browse-dir")

@@ -39,10 +39,6 @@ public class ImportService {
     @Value("${document.work-dir}")
     private String workDir;
 
-    /** 服务器路径导入允许的根目录 */
-    @Value("${document.import-root-dir}")
-    private String importRootDir;
-
     /** 文本分块大小（字符数） */
     @Value("${document.chunk-size}")
     private int chunkSize;
@@ -88,12 +84,7 @@ public class ImportService {
     @Transactional
     public String importFromPath(String pathStr, String targetDept) throws Exception {
         Path path = Path.of(pathStr).toAbsolutePath().normalize();
-        Path root = Path.of(importRootDir).toAbsolutePath().normalize();
 
-        if (!path.startsWith(root)) {
-            log.warn("服务器路径导入越权尝试: {} (允许根目录: {})", path, root);
-            throw new IllegalArgumentException("文件路径不在允许的范围内");
-        }
         if (!Files.isRegularFile(path)) {
             throw new IllegalArgumentException("文件不存在或不是普通文件");
         }
@@ -109,12 +100,7 @@ public class ImportService {
     @Transactional
     public String importFromDir(String dirPathStr, String targetDept) throws Exception {
         Path dirPath = Path.of(dirPathStr).toAbsolutePath().normalize();
-        Path root = Path.of(importRootDir).toAbsolutePath().normalize();
 
-        if (!dirPath.startsWith(root)) {
-            log.warn("服务器目录导入越权尝试: {} (允许根目录: {})", dirPath, root);
-            throw new IllegalArgumentException("目录路径不在允许的范围内");
-        }
         if (!Files.isDirectory(dirPath)) {
             throw new IllegalArgumentException("路径不存在或不是目录");
         }
