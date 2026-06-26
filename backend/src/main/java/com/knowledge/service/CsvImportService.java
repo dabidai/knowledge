@@ -145,6 +145,15 @@ public class CsvImportService {
             String[] row = rows.get(i);
             if (row.length < 9) continue;
 
+            // 诊断：打印超长字段（定位 opencsv 解析差异用）
+            if (row.length > 9) {
+                log.warn("[诊断] item.csv 行{}: 列数={} (期望9), row[0]={}", i + 1, row.length, row.length > 0 ? row[0] : "N/A");
+            }
+            if (row[5].length() > 10 || row[8].length() > 20) {
+                log.warn("[诊断] item.csv 行{}: year.len={}, itemType.len={}, row[0]={}",
+                        i + 1, row[5].length(), row.length > 8 ? row[8].length() : -1, row[0]);
+            }
+
             String itemId = row[0].trim();
             Item item = itemRepo.findById(itemId).orElse(Item.builder().itemId(itemId).build());
 
