@@ -9,6 +9,10 @@ import org.apache.poi.hwpf.model.PicturesTable;
 import org.apache.poi.hwpf.usermodel.Picture;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.poifs.filesystem.DirectoryNode;
+import org.apache.poi.poifs.filesystem.DocumentEntry;
+import org.apache.poi.poifs.filesystem.DocumentInputStream;
+import org.apache.poi.poifs.filesystem.DocumentNode;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.springframework.stereotype.Component;
@@ -245,18 +249,23 @@ public class DocumentParser {
         }
 
         // 回退 1：按 OLE2 二进制格式读取（老版 WPS 与 .doc 同格式）
-        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
-             POIFSFileSystem fs = new POIFSFileSystem(is);
-             HWPFDocument doc = new HWPFDocument(fs);
+        try (InputStream is = Files.newInputStream(filePath);
+             HWPFDocument doc = new HWPFDocument(is);
              WordExtractor extractor = new WordExtractor(doc)) {
             String text = extractor.getText();
             if (text != null && !text.isBlank()) {
-                String ocrText = ocrImagesFromDoc(filePath);
-                if (!ocrText.isEmpty()) text += "\n" + ocrText;
+                try {
+                    String ocrText = ocrImagesFromDoc(filePath);
+                    if (!ocrText.isEmpty()) text += "\n" + ocrText;
+                } catch (Exception e) {
+                    log.debug("WPS 图片 OCR 忽略: {}", e.getMessage());
+                }
                 return text;
             }
         } catch (Exception ignored) {
-            // 不是 OLE2 格式
+            // HWPFDocument 失败，尝试从 OLE2 文件系统直接提取文本
+            String rawText = extractRawTextFromOle2(filePath);
+            if (rawText != null) return rawText;
         }
 
         // 回退 2：当作 ZIP 压缩包，提取所有 XML 中的文本
@@ -293,6 +302,63 @@ public class DocumentParser {
     /** 解析 .txt 纯文本文件 */
     private String parseTxt(Path filePath) throws IOException {
         return Files.readString(filePath);
+    }
+
+    /**
+     * 从 OLE2 文件系统直接提取文本（当 HWPFDocument 无法处理 WPS 特有格式时回退使用）
+     * 遍历所有文档流，尝试 UTF-16LE / UTF-8 解码，过滤二进制噪声
+     */
+    private static String extractRawTextFromOle2(Path filePath) {
+        try (InputStream is = Files.newInputStream(filePath);
+             POIFSFileSystem fs = new POIFSFileSystem(is)) {
+            StringBuilder sb = new StringBuilder();
+            extractTextFromOle2Entries(fs.getRoot(), sb);
+            String result = sb.toString().trim();
+            return result.length() > 10 ? result : null;
+        } catch (Exception e) {
+            log.debug("OLE2 原始文本提取失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 递归遍历 OLE2 目录，读取文档流中的可打印文本 */
+    private static void extractTextFromOle2Entries(DirectoryNode dir, StringBuilder sb) {
+        for (org.apache.poi.poifs.filesystem.Entry entry : dir) {
+            if (entry.isDirectoryEntry()) {
+                extractTextFromOle2Entries((DirectoryNode) entry, sb);
+            } else if (entry.isDocumentEntry()) {
+                String name = entry.getName().toLowerCase();
+                // 跳过非文本流
+                if (name.contains("summaryinformation")
+                        || name.contains("objectpool")
+                        || name.equals("compobj")
+                        || name.endsWith(".bin")) continue;
+                try (DocumentInputStream dis = new DocumentInputStream((DocumentNode) entry)) {
+                    byte[] data = dis.readAllBytes();
+                    if (data.length < 8 || data.length > 10 * 1024 * 1024) continue;
+                    // 统计可打印字符比例，决定是否提取
+                    int printable = 0;
+                    for (byte b : data) {
+                        if (b >= 0x20 && b <= 0x7e) printable++;
+                        else if ((b & 0xff) >= 0xA0) printable++; // 中文字节
+                    }
+                    if ((double) printable / data.length < 0.6) continue;
+                    // 用 UTF-8 解码
+                    String text = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                    // 进一步筛选：去除纯二进制片段
+                    StringBuilder clean = new StringBuilder();
+                    for (int i = 0; i < text.length(); i++) {
+                        char c = text.charAt(i);
+                        if (c >= 0x20 && c <= 0x7e) clean.append(c);
+                        else if (Character.isIdeographic(c) || Character.isLetter(c)) clean.append(c);
+                        else if (c == '\n' || c == '\r' || c == '\t') clean.append(c);
+                        else clean.append(' ');
+                    }
+                    String cleaned = clean.toString().replaceAll("\\s+", " ").trim();
+                    if (cleaned.length() > 20) sb.append(cleaned).append("\n");
+                } catch (Exception ignored) {}
+            }
+        }
     }
 
     /** 从 ZIP 格式文档中提取内嵌图片并 OCR（适用于 DOCX/WPS/OFD） */
