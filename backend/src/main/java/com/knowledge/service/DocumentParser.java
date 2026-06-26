@@ -387,11 +387,10 @@ public class DocumentParser {
     }
 
     /**
-     * 将文本转换为结构化 Markdown
-     * 根据段落特征添加标题标记和表格格式
+     * 将文本转换为结构化 Markdown。
+     * 标题检测基于中文文档模式（第X章、编号开头等），过滤页码/分隔线等噪声，代码行保留原样。
      */
     public String toMarkdown(String plainText) {
-        // 基础转换：保留段落结构，规范化换行
         StringBuilder md = new StringBuilder();
         String[] lines = plainText.split("\n");
         boolean inTable = false;
@@ -404,16 +403,18 @@ public class DocumentParser {
                 continue;
             }
 
-            // 检测表格行（含多个制表符）
+            // 表格行（含多个制表符）
             if (trimmed.contains("\t")) {
                 if (!inTable) { md.append("\n"); inTable = true; }
                 md.append("| ").append(trimmed.replace("\t", " | ")).append(" |\n");
                 continue;
             }
 
-            // 检测标题（短行 + 无标点结尾，可能是标题）
-            if (trimmed.length() <= 50 && !trimmed.endsWith("。")
-                    && !trimmed.endsWith("，") && !trimmed.endsWith("；")) {
+            // 过滤页码、分隔线、单字符等噪声
+            if (isNoiseLine(trimmed)) continue;
+
+            // 标题检测
+            if (isHeading(trimmed)) {
                 md.append("### ").append(trimmed).append("\n\n");
                 continue;
             }
@@ -422,5 +423,61 @@ public class DocumentParser {
         }
 
         return md.toString().trim();
+    }
+
+    /** 是否为噪声行（页码、分隔线、极短文本） */
+    private static boolean isNoiseLine(String line) {
+        int len = line.trim().length();
+        if (len <= 2) return true;
+        // 纯数字/分隔符/制表符
+        if (line.matches("^[\\d\\-—=/\\|\\*#~\\.\\s─-╿]+$")) return true;
+        // PAGE 标识
+        if (line.equalsIgnoreCase("PAGE")) return true;
+        return false;
+    }
+
+    /** 是否匹配中文文档标题模式 */
+    private static boolean isHeading(String line) {
+        if (line.length() > 50) return false;
+
+        // 句末非标题标点结尾 → 不是标题
+        char last = line.charAt(line.length() - 1);
+        if (last == '。' || last == '，' || last == '；' || last == '）' || last == ')') {
+            return false;
+        }
+
+        // 代码/命令特征 → 不是标题
+        if (isCodeLine(line)) return false;
+
+        // "第X章/条/节/种/部分/类/项/款"
+        if (line.matches("^第.{1,8}(章|条|节|种|部分|类|项|款|目).*")) return true;
+        // 中文数字编号：一、二、
+        if (line.matches("^[一二三四五六七八九十]+[、，,].*") && line.length() <= 25) return true;
+        // 括号编号：（一）（1）
+        if (line.matches("^[（(][一二三四五六七八九十\\d]+[）)]\\s*.*") && line.length() <= 30) return true;
+        // 公文标题关键词
+        if (line.matches("^(关于|根据|按照|为了|为贯彻|关于印发|转发).{2,30}$")) return true;
+        // 纯中文短行（5-25 字，无标点）
+        if (line.length() >= 5 && line.length() <= 25
+                && line.matches("^[\\u4e00-\\u9fff\\w]+$")) return true;
+
+        return false;
+    }
+
+    /** 是否为代码/命令特征行（路径、命令行参数、IP 等） */
+    private static boolean isCodeLine(String line) {
+        String lower = line.toLowerCase();
+        return lower.contains("systemctl")
+            || lower.contains(".service")
+            || lower.contains("kill")
+            || lower.contains("x11vnc")
+            || lower.contains("cat ")
+            || lower.contains("cat /")
+            || lower.contains("/var/")
+            || lower.contains("/usr/")
+            || lower.contains("/root/")
+            || lower.contains("/etc/")
+            || lower.matches(".*\\s-[a-z]+(\\s|$).*")      // -flag style commands
+            || lower.matches(".*\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}.*");  // IP
     }
 }
