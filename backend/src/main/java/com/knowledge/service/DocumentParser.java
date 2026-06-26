@@ -219,8 +219,7 @@ public class DocumentParser {
 
     /**
      * 解析 WPS 文字文档
-     * 新版 WPS (.wps) 基于 OOXML（即 XML 的 ZIP 压缩包），结构与 DOCX 类似。
-     * 尝试：1. 按 DOCX 方式读取  2. 按 ZIP+XML 提取文本
+     * 尝试：1. OOXML（新版 WPS） 2. OLE2（老版 WPS，Composite Document File） 3. ZIP+XML
      */
     private String parseWps(Path filePath) throws IOException {
         // 先尝试以 DOCX 方式打开（新版 WPS 兼容 OOXML）
@@ -242,10 +241,25 @@ public class DocumentParser {
                 return sb.toString();
             }
         } catch (Exception ignored) {
-            // 不是 OOXML 格式，尝试 ZIP+XML 方式
+            // 不是 OOXML 格式
         }
 
-        // 回退：当作 ZIP 压缩包，提取所有 XML 中的文本
+        // 回退 1：按 OLE2 二进制格式读取（老版 WPS 与 .doc 同格式）
+        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
+             POIFSFileSystem fs = new POIFSFileSystem(is);
+             HWPFDocument doc = new HWPFDocument(fs);
+             WordExtractor extractor = new WordExtractor(doc)) {
+            String text = extractor.getText();
+            if (text != null && !text.isBlank()) {
+                String ocrText = ocrImagesFromDoc(filePath);
+                if (!ocrText.isEmpty()) text += "\n" + ocrText;
+                return text;
+            }
+        } catch (Exception ignored) {
+            // 不是 OLE2 格式
+        }
+
+        // 回退 2：当作 ZIP 压缩包，提取所有 XML 中的文本
         try (ZipFile zip = new ZipFile(filePath.toFile())) {
             DocumentBuilderFactory factory = secureFactory();
             DocumentBuilder builder = factory.newDocumentBuilder();
