@@ -126,7 +126,7 @@ public class ImportService {
                 } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.putIfAbsent("user", p);
                 } else if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps") || name.endsWith(".txt")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
                     docFiles.add(p);
                 }
             }
@@ -252,7 +252,7 @@ public class ImportService {
                 } else if (name.startsWith("user") && (name.endsWith(".csv") || name.endsWith(".xlsx"))) {
                     csvFiles.put("user", p);
                 } else if (name.endsWith(".doc") || name.endsWith(".docx")
-                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps") || name.endsWith(".txt")) {
+                        || name.endsWith(".pdf") || name.endsWith(".ofd") || name.endsWith(".wps")) {
                     docFiles.add(p);
                 }
             }
