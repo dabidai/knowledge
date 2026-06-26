@@ -152,7 +152,7 @@ const progress = reactive({
 onMounted(async () => {
   try {
     const res = await deptApi.list()
-    departments.value = res.data.data || []
+    departments.value = res.data.data.content || []
     // admin 默认选公共区，普通用户默认选自己的部门
     if (!authStore.isAdmin && authStore.user?.deptName) {
       target.value = authStore.user.deptName
