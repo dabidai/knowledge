@@ -66,14 +66,19 @@
             <div v-if="msg.sources && msg.sources.length > 0" class="msg-sources">
               <div class="sources-header">📄 参考来源 ({{ msg.sources.length }})</div>
               <div class="sources-list">
-                <div v-for="src in msg.sources" :key="src.fileId" class="source-item">
-                  <div class="source-name">{{ src.fileName }}</div>
-                  <div class="source-snippet" v-html="src.snippet || '无预览'"></div>
-                  <div class="source-meta">
-                    <el-button size="small" type="primary" @click="downloadFile(src.fileId, src.fileName)" v-if="src.fileId">
-                      ⬇ 下载原文
-                    </el-button>
-                    <span v-else style="color:#ccc;font-size:12px">(文件暂不可下载)</span>
+                <div v-for="(src, si) in msg.sources" :key="src.fileId" class="source-item">
+                  <div class="source-name" @click="toggleSource(i, si)">
+                    <el-icon v-if="expandedSources[i]?.has(si)"><ArrowDown /></el-icon>
+                    <el-icon v-else><ArrowRight /></el-icon>
+                    {{ src.fileName }}
+                  </div>
+                  <div v-if="expandedSources[i]?.has(si)" class="source-detail">
+                    <div class="source-snippet" v-html="src.snippet || '无预览'"></div>
+                    <div class="source-meta">
+                      <el-button size="small" type="primary" @click="downloadFile(src.fileId, src.fileName)" v-if="src.fileId">
+                        ⬇ 下载原文
+                      </el-button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -142,6 +147,7 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
 const input = ref('')
 const thinking = ref(false)
 const messagesRef = ref<HTMLElement | null>(null)
+const expandedSources = ref<Record<number, Set<number>>>({})
 
 const quickQuestions = [
   '最近有哪些关于信息安全的通知？',
@@ -261,9 +267,12 @@ async function handleSend() {
       await loadConversations()
     }
 
+    // 清理 AI 回答中的"（来源：XXX）"后缀
+    const cleanAnswer = (data.answer || '').replace(/（来源：[^）]*）/g, '')
+
     messages.value.push({
       role: 'assistant',
-      content: data.answer || '抱歉，AI 服务暂时不可用。',
+      content: cleanAnswer || '抱歉，AI 服务暂时不可用。',
       sources: data.sources || [],
     })
   } catch {
@@ -311,6 +320,20 @@ function handleMessageClick(e: MouseEvent) {
     const fileName = target.getAttribute('download') || target.textContent || ''
     downloadFile(fileId, fileName)
   }
+}
+
+function toggleSource(msgIndex: number, srcIndex: number) {
+  if (!expandedSources.value[msgIndex]) {
+    expandedSources.value[msgIndex] = new Set()
+  }
+  const set = expandedSources.value[msgIndex]
+  if (set.has(srcIndex)) {
+    set.delete(srcIndex)
+  } else {
+    set.add(srcIndex)
+  }
+  // trigger reactivity
+  expandedSources.value = { ...expandedSources.value }
 }
 
 async function scrollBottom() {
@@ -382,7 +405,9 @@ function renderMd(text: string, sources?: any[]) {
 .sources-list { max-height: 300px; overflow-y: auto; }
 .source-item { padding: 8px 0; border-bottom: 1px solid #eee; }
 .source-item:last-child { border-bottom: none; }
-.source-name { font-weight: bold; font-size: 13px; }
+.source-name { font-weight: bold; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.source-name:hover { color: #409EFF; }
+.source-detail { margin-top: 6px; }
 .source-snippet { color: #999; font-size: 12px; margin: 2px 0; }
 .source-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 
