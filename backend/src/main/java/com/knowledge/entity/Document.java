@@ -70,6 +70,18 @@ public class Document {
     @Column(name = "import_batch", length = 64)
     private String importBatch;
 
+    /** PDF 总页数 */
+    @Column(name = "total_pages")
+    private Integer totalPages;
+
+    /** OCR 处理页数 */
+    @Column(name = "ocr_pages")
+    private Integer ocrPages;
+
+    /** 质量等级: A(全原生) / B(部分OCR) / C(全OCR或异常多) */
+    @Column(name = "quality_grade", length = 2)
+    private String qualityGrade;
+
     @PrePersist
     void prePersist() {
         if (this.importTime == null) {

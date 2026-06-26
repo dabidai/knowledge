@@ -441,8 +441,15 @@ public class ImportService {
         String fileName = docPath.getFileName().toString();
         log.debug("处理文档: {}", fileName);
 
-        // 1. 解析文本
-        String plainText = documentParser.parse(docPath);
+        // 1. 解析文本 —— PDF 走双轨解析（原生文字 + OCR 降级），其他格式走普通解析
+        String plainText;
+        PdfParser.PdfParseResult pdfMeta = null;
+        if (fileName.toLowerCase().endsWith(".pdf")) {
+            pdfMeta = documentParser.parsePdfWithMeta(docPath);
+            plainText = pdfMeta.text();
+        } else {
+            plainText = documentParser.parse(docPath);
+        }
         String markdown = documentParser.toMarkdown(plainText);
 
         // 2. 在 document 表中匹配（按文件名）
@@ -484,6 +491,11 @@ public class ImportService {
         doc.setMinioMdPath(mdPath);
         doc.setTextLength((long) plainText.length());
         doc.setParsedAt(java.time.LocalDateTime.now());
+        if (pdfMeta != null) {
+            doc.setTotalPages(pdfMeta.totalPages());
+            doc.setOcrPages(pdfMeta.ocrPages());
+            doc.setQualityGrade(pdfMeta.qualityGrade());
+        }
         docRepo.save(doc);
 
         // 5. 文本分块 → Embedding → ES 索引

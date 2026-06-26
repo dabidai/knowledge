@@ -94,6 +94,26 @@ document:
   # 分块重叠 (字符数)
   chunk-overlap: 64
 
+# ==================== OCR 服务 ====================
+ocr:
+  # Tesseract 语言数据目录
+  tessdata-path: ${TESSDATA_PATH:/usr/share/tesseract-ocr/5/tessdata}
+  # OCR 识别语言（中文简体 + 英文）
+  language: chi_sim+eng
+  # 渲染 DPI
+  dpi: 300
+
+# ==================== PDF 解析 ====================
+pdf:
+  # 页眉过滤（页面顶部比例）
+  header-filter-top: 0.10
+  # 页脚过滤（页面底部比例）
+  footer-filter-bottom: 0.12
+  # 触发 OCR 的最小字符数
+  min-text-length: 20
+  # 有效字符占比阈值
+  min-valid-ratio: 0.45
+
 # ==================== 日志 ====================
 logging:
   level:

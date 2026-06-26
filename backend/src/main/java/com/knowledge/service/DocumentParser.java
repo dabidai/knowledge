@@ -1,9 +1,7 @@
 package com.knowledge.service;
 
+import com.knowledge.service.PdfParser.PdfParseResult;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.pdfbox.Loader;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
@@ -24,11 +22,17 @@ import java.util.zip.ZipFile;
 
 /**
  * 文档解析引擎
- * 支持 doc / docx / pdf（OFD 后续接入）
+ * 支持 doc / docx / pdf（OCR 增强）/ ofd / wps / txt
  */
 @Slf4j
 @Component
 public class DocumentParser {
+
+    private final PdfParser pdfParser;
+
+    public DocumentParser(PdfParser pdfParser) {
+        this.pdfParser = pdfParser;
+    }
 
     static {
         // 放宽 ZIP bomb 检测 —— 有些合法 docx/ofd 内嵌压缩率极高的 emf/wmf 图片
@@ -57,6 +61,15 @@ public class DocumentParser {
         } catch (Exception e) {
             throw new IOException("解析失败: " + filePath.getFileName(), e);
         }
+    }
+
+    /** 解析 PDF 并返回质量元数据（供 ImportService 写入 Document 实体） */
+    public PdfParseResult parsePdfWithMeta(Path filePath) throws IOException {
+        String fileName = filePath.getFileName().toString().toLowerCase();
+        if (!fileName.endsWith(".pdf")) {
+            throw new IllegalArgumentException("非 PDF 文件: " + fileName);
+        }
+        return pdfParser.parse(filePath);
     }
 
     /**
@@ -113,13 +126,9 @@ public class DocumentParser {
         }
     }
 
-    /** 解析 PDF */
+    /** 解析 PDF —— 委托 PdfParser 双轨处理（原生文字 + OCR 降级） */
     private String parsePdf(Path filePath) throws IOException {
-        try (PDDocument doc = Loader.loadPDF(filePath.toFile())) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            stripper.setSortByPosition(true);
-            return stripper.getText(doc);
-        }
+        return pdfParser.parse(filePath).text();
     }
 
     /** 创建安全的 DocumentBuilderFactory（禁用 XXE） */
