@@ -24,7 +24,7 @@ public class Item {
     private String itemId;
 
     /** 事项标题 */
-    @Column(nullable = false, length = 500)
+    @Column(nullable = false, length = 2000)
     private String title;
 
     /** 事项发起时间 */
@@ -32,31 +32,31 @@ public class Item {
     private LocalDateTime createdAt;
 
     /** 事项分类，如 "通知" */
-    @Column(length = 50)
+    @Column(length = 500)
     private String category;
 
     /** 分类编号，如 "2021通1234" */
-    @Column(name = "category_no", length = 100)
+    @Column(name = "category_no", length = 500)
     private String categoryNo;
 
     /** 年度 */
-    @Column(length = 10)
+    @Column(length = 50)
     private String year;
 
     /** 字号 */
-    @Column(name = "ref_no", length = 100)
+    @Column(name = "ref_no", length = 500)
     private String refNo;
 
     /** 发文单位 */
-    @Column(length = 200)
+    @Column(length = 500)
     private String issuer;
 
     /** 事项类型: 收文 / 发文 */
-    @Column(name = "item_type", length = 20)
+    @Column(name = "item_type", length = 255)
     private String itemType;
 
     /** 所属部门 */
-    @Column(name = "dept_name", length = 100)
+    @Column(name = "dept_name", length = 255)
     private String deptName;
 
     /** 是否公共区文档 */
@@ -69,7 +69,7 @@ public class Item {
     private LocalDateTime importTime;
 
     /** 导入批次 */
-    @Column(name = "import_batch", length = 64)
+    @Column(name = "import_batch", length = 255)
     private String importBatch;
 
     @PrePersist

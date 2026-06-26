@@ -27,7 +27,7 @@ public class Opinion {
     private Item item;
 
     /** 签阅人姓名 */
-    @Column(nullable = false, length = 50)
+    @Column(nullable = false, length = 255)
     private String signer;
 
     /** 签阅时间 */

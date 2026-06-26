@@ -20,7 +20,7 @@ public class Document {
 
     /** 文件ID，来自 CSV 的原始 ID */
     @Id
-    @Column(length = 64)
+    @Column(length = 255)
     private String fileId;
 
     /** 文件名 / 路径，如 "2021/09/01/xxx.PDF" */
