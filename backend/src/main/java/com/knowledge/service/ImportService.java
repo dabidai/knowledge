@@ -2,6 +2,8 @@ package com.knowledge.service;
 
 import com.knowledge.entity.*;
 import com.knowledge.repository.*;
+import lombok.Builder;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
