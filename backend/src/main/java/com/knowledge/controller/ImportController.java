@@ -2,10 +2,13 @@ package com.knowledge.controller;
 
 import com.knowledge.dto.ApiResponse;
 import com.knowledge.dto.ImportProgress;
+import com.knowledge.dto.PagedResponse;
 import com.knowledge.entity.ImportTask;
 import com.knowledge.repository.ImportTaskRepository;
 import com.knowledge.service.ImportService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -200,12 +203,13 @@ public class ImportController {
         return ApiResponse.ok(progress);
     }
 
-    /** 查询导入历史列表 */
+    /** 查询导入历史列表（分页） */
     @GetMapping("/tasks")
-    @org.springframework.cache.annotation.Cacheable("importTasks")
-    public ApiResponse<List<ImportTask>> tasks() {
-        List<ImportTask> tasks = taskRepo.findAllByOrderByCreatedAtDesc();
-        return ApiResponse.ok(tasks);
+    public ApiResponse<PagedResponse<ImportTask>> tasks(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<ImportTask> result = taskRepo.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size));
+        return ApiResponse.ok(new PagedResponse<>(result));
     }
 
     /** 删除导入任务（仅允许删除失败或已完成的任务） */

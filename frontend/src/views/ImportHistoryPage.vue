@@ -61,6 +61,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="size"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          @current-change="refresh"
+          @size-change="refresh"
+        />
+      </div>
     </el-card>
 
     <!-- 详情弹窗 -->
@@ -94,14 +106,18 @@ import { importApi } from '@/api'
 
 const tasks = ref<any[]>([])
 const loading = ref(false)
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 const dialogVisible = ref(false)
 const currentTask = ref<any>(null)
 
 async function refresh() {
   loading.value = true
   try {
-    const res = await importApi.tasks()
-    tasks.value = res.data.data || []
+    const res = await importApi.tasks(page.value - 1, size.value)
+    tasks.value = res.data.data.content || []
+    total.value = res.data.data.totalElements || 0
   } finally {
     loading.value = false
   }

@@ -1,9 +1,12 @@
 package com.knowledge.controller;
 
 import com.knowledge.dto.ApiResponse;
+import com.knowledge.dto.PagedResponse;
 import com.knowledge.entity.Department;
 import com.knowledge.repository.DepartmentRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,10 +21,13 @@ public class DepartmentController {
 
     private final DepartmentRepository deptRepo;
 
-    /** 部门列表（所有登录用户可见，用于导入时选择目标部门） */
+    /** 部门列表（分页，默认 size=50 保证下拉框通常一次拿全） */
     @GetMapping
-    public ApiResponse<List<Department>> list() {
-        return ApiResponse.ok(deptRepo.findAll());
+    public ApiResponse<PagedResponse<Department>> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        Page<Department> result = deptRepo.findAll(PageRequest.of(page, size));
+        return ApiResponse.ok(new PagedResponse<>(result));
     }
 
     /** 新增部门 (仅 admin) */

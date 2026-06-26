@@ -26,6 +26,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="size"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          @current-change="load"
+          @size-change="load"
+        />
+      </div>
     </el-card>
 
     <!-- 新增部门对话框 -->
@@ -50,14 +62,18 @@ import { ElMessage } from 'element-plus'
 
 const departments = ref<any[]>([])
 const loading = ref(false)
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 const showCreate = ref(false)
 const newName = ref('')
 
 async function load() {
   loading.value = true
   try {
-    const res = await deptApi.list()
-    departments.value = res.data.data || []
+    const res = await deptApi.list(page.value - 1, size.value)
+    departments.value = res.data.data.content || []
+    total.value = res.data.data.totalElements || 0
   } finally {
     loading.value = false
   }

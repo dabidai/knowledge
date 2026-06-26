@@ -1,11 +1,14 @@
 package com.knowledge.controller;
 
 import com.knowledge.dto.ApiResponse;
+import com.knowledge.dto.PagedResponse;
 import com.knowledge.entity.Department;
 import com.knowledge.entity.User;
 import com.knowledge.repository.DepartmentRepository;
 import com.knowledge.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -49,10 +52,13 @@ public class UserController {
         return ApiResponse.ok("管理员创建成功", Map.of("username", username));
     }
 
-    /** 用户列表 */
+    /** 用户列表（分页） */
     @GetMapping
-    public ApiResponse<List<User>> list() {
-        return ApiResponse.ok(userRepo.findAll());
+    public ApiResponse<PagedResponse<User>> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<User> result = userRepo.findAll(PageRequest.of(page, size));
+        return ApiResponse.ok(new PagedResponse<>(result));
     }
 
     /** 新增用户 */

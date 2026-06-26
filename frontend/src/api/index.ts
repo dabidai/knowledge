@@ -74,8 +74,8 @@ export const importApi = {
     http.post('/import/from-dir', data),
   progress: (batchId: string) =>
     http.get(`/import/progress/${batchId}`),
-  tasks: () =>
-    http.get('/import/tasks'),
+  tasks: (page = 0, size = 20) =>
+    http.get('/import/tasks', { params: { page, size } }),
   deleteTask: (batchId: string) =>
     http.delete(`/import/tasks/${batchId}`),
   retryTask: (batchId: string) =>
@@ -95,13 +95,13 @@ export const graphApi = {
 }
 
 export const userApi = {
-  list: () => http.get('/users'),
+  list: (page = 0, size = 20) => http.get('/users', { params: { page, size } }),
   create: (data: Record<string, string>) => http.post('/users', data),
   delete: (id: number) => http.delete(`/users/${id}`),
 }
 
 export const deptApi = {
-  list: () => http.get('/departments'),
+  list: (page = 0, size = 50) => http.get('/departments', { params: { page, size } }),
   create: (name: string) => http.post('/departments', { name }),
   delete: (id: number) => http.delete(`/departments/${id}`),
 }

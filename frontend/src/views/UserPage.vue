@@ -31,6 +31,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div style="margin-top:16px;display:flex;justify-content:flex-end">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="size"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          @current-change="loadUsers"
+          @size-change="loadUsers"
+        />
+      </div>
     </el-card>
 
     <!-- 新增用户对话框 -->
@@ -82,6 +94,9 @@ import { ElMessage } from 'element-plus'
 
 const users = ref<any[]>([])
 const loading = ref(false)
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 const showCreate = ref(false)
 const showDeptDialog = ref(false)
 const depts = ref<string[]>([])
@@ -90,8 +105,8 @@ const form = reactive({ username: '', password: '', dept: '', role: 'default' })
 
 async function loadDepts() {
   try {
-    const res = await deptApi.list()
-    depts.value = (res.data.data || []).map((d: any) => d.name)
+    const res = await deptApi.list(0, 100)
+    depts.value = (res.data.data.content || []).map((d: any) => d.name)
     if (depts.value.length > 0 && !form.dept) {
       form.dept = depts.value[0]
     }
@@ -101,8 +116,9 @@ async function loadDepts() {
 async function loadUsers() {
   loading.value = true
   try {
-    const res = await userApi.list()
-    users.value = res.data.data
+    const res = await userApi.list(page.value - 1, size.value)
+    users.value = res.data.data.content || []
+    total.value = res.data.data.totalElements || 0
   } finally {
     loading.value = false
   }
