@@ -1,6 +1,7 @@
 package com.knowledge.service;
 
 import com.knowledge.service.PdfParser;
+import net.sourceforge.tess4j.Tesseract;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +19,9 @@ import static org.junit.jupiter.api.Assertions.*;
 /** DocumentParser 单元测试 —— 测试文档解析和 Markdown 转换逻辑 */
 @ExtendWith(MockitoExtension.class)
 class DocumentParserTest {
+
+    @Mock
+    private Tesseract tesseract;
 
     @Mock
     private PdfParser pdfParser;

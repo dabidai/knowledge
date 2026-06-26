@@ -2,8 +2,11 @@ package com.knowledge.service;
 
 import com.knowledge.service.PdfParser.PdfParseResult;
 import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.tess4j.Tesseract;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
+import org.apache.poi.hwpf.model.PicturesTable;
+import org.apache.poi.hwpf.usermodel.Picture;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
@@ -12,10 +15,14 @@ import org.springframework.stereotype.Component;
 import org.w3c.dom.*;
 import javax.xml.parsers.*;
 
+import javax.imageio.ImageIO;
 import javax.xml.XMLConstants;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -29,9 +36,11 @@ import java.util.zip.ZipFile;
 public class DocumentParser {
 
     private final PdfParser pdfParser;
+    private final Tesseract tesseract;
 
-    public DocumentParser(PdfParser pdfParser) {
+    public DocumentParser(PdfParser pdfParser, Tesseract tesseract) {
         this.pdfParser = pdfParser;
+        this.tesseract = tesseract;
     }
 
     static {
@@ -112,17 +121,23 @@ public class DocumentParser {
                     sb.append("\n");
                 });
             });
-            return sb.toString();
+            String text = sb.toString();
+            String ocrText = ocrImagesFromZip(filePath);
+            if (!ocrText.isEmpty()) text += "\n" + ocrText;
+            return text;
         }
     }
 
     /** 按 OLE2 (.doc) 格式解析 */
     private String tryParseWithOLE2(Path filePath) throws IOException {
-        try (InputStream is = java.nio.file.Files.newInputStream(filePath);
+        try (InputStream is = Files.newInputStream(filePath);
              POIFSFileSystem fs = new POIFSFileSystem(is);
              HWPFDocument doc = new HWPFDocument(fs);
              WordExtractor extractor = new WordExtractor(doc)) {
-            return extractor.getText();
+            String text = extractor.getText();
+            String ocrText = ocrImagesFromDoc(filePath);
+            if (!ocrText.isEmpty()) text += "\n" + ocrText;
+            return text;
         }
     }
 
@@ -191,9 +206,10 @@ public class DocumentParser {
             // 去重和清理
             String result = sb.toString().trim();
             if (result.isEmpty()) {
-                log.warn("OFD 文件未能提取到文本: {}", filePath.getFileName());
-                return "[OFD 文档 — 未能提取文本内容] " + filePath.getFileName();
+                result = "[OFD 文档 — 未能提取文本内容] " + filePath.getFileName();
             }
+            String ocrText = ocrImagesFromZip(filePath);
+            if (!ocrText.isEmpty()) result += "\n" + ocrText;
             return result;
         } catch (Exception e) {
             log.error("OFD 解析失败: {}", filePath, e);
@@ -220,7 +236,11 @@ public class DocumentParser {
                     sb.append("\n");
                 });
             });
-            if (!sb.isEmpty()) return sb.toString();
+            if (!sb.isEmpty()) {
+                String ocrText = ocrImagesFromZip(filePath);
+                if (!ocrText.isEmpty()) sb.append("\n").append(ocrText);
+                return sb.toString();
+            }
         } catch (Exception ignored) {
             // 不是 OOXML 格式，尝试 ZIP+XML 方式
         }
@@ -242,7 +262,12 @@ public class DocumentParser {
                 }
             }
 
-            if (!sb.isEmpty()) return sb.toString().trim();
+            if (!sb.isEmpty()) {
+                String result = sb.toString().trim();
+                String ocrText = ocrImagesFromZip(filePath);
+                if (!ocrText.isEmpty()) result += "\n" + ocrText;
+                return result;
+            }
             log.warn("WPS 文件未能提取到文本: {}", filePath.getFileName());
             return "[WPS 文档 — 未能提取文本内容] " + filePath.getFileName();
         } catch (Exception e) {
@@ -253,7 +278,84 @@ public class DocumentParser {
 
     /** 解析 .txt 纯文本文件 */
     private String parseTxt(Path filePath) throws IOException {
-        return java.nio.file.Files.readString(filePath);
+        return Files.readString(filePath);
+    }
+
+    /** 从 ZIP 格式文档中提取内嵌图片并 OCR（适用于 DOCX/WPS/OFD） */
+    private String ocrImagesFromZip(Path filePath) {
+        StringBuilder sb = new StringBuilder();
+        try (ZipFile zip = new ZipFile(filePath.toFile())) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory()) continue;
+                if (!isImageFile(entry.getName())) continue;
+                if (entry.getSize() > 50 * 1024 * 1024) {
+                    log.debug("图片过大，跳过 OCR: {} ({}MB)", entry.getName(), entry.getSize() / 1024 / 1024);
+                    continue;
+                }
+                try (InputStream is = zip.getInputStream(entry)) {
+                    BufferedImage image = ImageIO.read(is);
+                    if (image != null) {
+                        try {
+                            String text = tesseract.doOCR(image);
+                            if (text != null && !text.isBlank()) {
+                                sb.append("\n[图片文字]\n").append(text.trim()).append("\n");
+                            }
+                        } finally {
+                            image.flush();
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("图片 OCR 失败: {}, {}", entry.getName(), e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.debug("提取内嵌图片失败: {}, {}", filePath, e.getMessage());
+        }
+        return sb.toString();
+    }
+
+    /** 从 OLE2 (.doc) 格式文档中提取内嵌图片并 OCR */
+    private String ocrImagesFromDoc(Path filePath) {
+        StringBuilder sb = new StringBuilder();
+        try (InputStream is = Files.newInputStream(filePath);
+             POIFSFileSystem fs = new POIFSFileSystem(is);
+             HWPFDocument doc = new HWPFDocument(fs)) {
+            PicturesTable pictures = doc.getPicturesTable();
+            if (pictures != null) {
+                for (Picture pic : pictures.getAllPictures()) {
+                    try {
+                        byte[] content = pic.getContent();
+                        if (content.length > 50 * 1024 * 1024) continue;
+                        BufferedImage image = ImageIO.read(new ByteArrayInputStream(content));
+                        if (image != null) {
+                            try {
+                                String text = tesseract.doOCR(image);
+                                if (text != null && !text.isBlank()) {
+                                    sb.append("\n[图片文字]\n").append(text.trim()).append("\n");
+                                }
+                            } finally {
+                                image.flush();
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("DOC 图片 OCR 失败: {}", e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("提取 DOC 内嵌图片失败: {}, {}", filePath, e.getMessage());
+        }
+        return sb.toString();
+    }
+
+    /** 是否为常见光栅图片格式 */
+    private static boolean isImageFile(String name) {
+        String lower = name.toLowerCase();
+        return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+            || lower.endsWith(".bmp") || lower.endsWith(".gif")
+            || lower.endsWith(".tiff") || lower.endsWith(".tif");
     }
 
     /** 递归提取 XML 节点中的文本 */
