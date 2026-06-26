@@ -175,6 +175,14 @@ nohup java -jar target/knowledge-base-0.1.0.jar > app.log 2>&1 &
 
 ---
 
+### 11. 导入反复报 "value too long"，在不同字段间轮换
+
+**原因**: openCSV 默认解析器（非 RFC 4180）与 Python csv 模块行为不一致。CSV 文件中多行标题字段含未转义 ASCII 双引号，openCSV 默认解析器用 `\` 作转义符，引号匹配逻辑与 RFC 4180 标准不同，导致字段边界错乱、数据跨行串位，最终某个字段长度超出数据库限制。每次加大出错的字段后，错误转移到另一个字段。
+
+**解决**: `CsvImportService.java` 中将 openCSV 解析器替换为 `RFC4180Parser`，与 Python csv 模块使用相同的 RFC 4180 标准。详见 [docs/csv-import-troubleshooting.md](docs/csv-import-troubleshooting.md)。
+
+---
+
 ## 导入流程说明
 
 ### 分开导入 CSV 和文档

@@ -32,11 +32,11 @@ public class Item {
     private LocalDateTime createdAt;
 
     /** 事项分类，如 "通知" */
-    @Column(length = 500)
+    @Column(columnDefinition = "TEXT")
     private String category;
 
     /** 分类编号，如 "2021通1234" */
-    @Column(name = "category_no", length = 500)
+    @Column(name = "category_no", columnDefinition = "TEXT")
     private String categoryNo;
 
     /** 年度 */
@@ -44,11 +44,11 @@ public class Item {
     private String year;
 
     /** 字号 */
-    @Column(name = "ref_no", length = 500)
+    @Column(name = "ref_no", columnDefinition = "TEXT")
     private String refNo;
 
     /** 发文单位 */
-    @Column(length = 500)
+    @Column(columnDefinition = "TEXT")
     private String issuer;
 
     /** 事项类型: 收文 / 发文 */
