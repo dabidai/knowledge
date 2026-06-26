@@ -465,17 +465,32 @@ public class ImportService {
             // 更新 Neo4j 文档节点状态
             graphBuildService.createDocument(doc.getFileId(), fileName, "matched");
         } else {
-            // 未匹配到 CSV 记录，创建 orphan
-            String newFileId = UUID.randomUUID().toString().replace("-", "");
-            doc = Document.builder()
-                    .fileId(newFileId)
-                    .fileName(fileName)
-                    .status("orphan")
-                    .deptName(deptName)
-                    .isPublic(isPublic)
-                    .importBatch(batchId)
-                    .build();
-            graphBuildService.createDocument(newFileId, fileName, "orphan");
+            // 未匹配到 CSV 记录 → 尝试查找已存在的文档（同文件名覆盖）
+            Optional<Document> existingOpt = docRepo.findAll().stream()
+                    .filter(d -> extractBaseName(fileName).equals(extractBaseName(d.getFileName())))
+                    .findFirst();
+
+            if (existingOpt.isPresent()) {
+                doc = existingOpt.get();
+                log.info("覆盖已有文档: {} (fileId={})", fileName, doc.getFileId());
+                doc.setDeptName(deptName);
+                doc.setIsPublic(isPublic);
+                doc.setImportBatch(batchId);
+                // 删除旧的 ES 索引条目（稍后重新索引）
+                esService.deleteByDocId(doc.getFileId());
+            } else {
+                // 未匹配到任何记录，创建 orphan
+                String newFileId = UUID.randomUUID().toString().replace("-", "");
+                doc = Document.builder()
+                        .fileId(newFileId)
+                        .fileName(fileName)
+                        .status("orphan")
+                        .deptName(deptName)
+                        .isPublic(isPublic)
+                        .importBatch(batchId)
+                        .build();
+                graphBuildService.createDocument(newFileId, fileName, "orphan");
+            }
         }
 
         // 3. 上传原始文件 → MinIO

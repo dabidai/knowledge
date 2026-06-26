@@ -62,6 +62,14 @@ public class ElasticsearchService {
                 (int) Math.ceil(docs.size() / (double) batchSize));
     }
 
+    /** 删除指定文档的所有 ES 索引条目（用于覆盖重导时清理旧数据） */
+    public void deleteByDocId(String docId) throws IOException {
+        esClient.deleteByQuery(DeleteByQueryRequest.of(r -> r
+                .index(indexName)
+                .query(q -> q.term(t -> t.field("docId").value(docId)))
+        ));
+    }
+
     /**
      * 混合检索：BM25 关键词 + KNN 向量，支持分类/年度/事项类型筛选。
      *
