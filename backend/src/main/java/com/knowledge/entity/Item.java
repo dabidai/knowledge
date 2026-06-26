@@ -20,7 +20,7 @@ public class Item {
 
     /** 事项ID，来自 CSV 的原始 ID */
     @Id
-    @Column(length = 64)
+    @Column(columnDefinition = "TEXT")
     private String itemId;
 
     /** 事项标题 */
