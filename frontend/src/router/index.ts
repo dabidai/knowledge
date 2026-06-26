@@ -25,7 +25,7 @@ const router = createRouter({
       path: '/import',
       name: 'Import',
       component: () => import('@/views/ImportPage.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
       path: '/graph',
@@ -55,7 +55,7 @@ const router = createRouter({
       path: '/history',
       name: 'History',
       component: () => import('@/views/ImportHistoryPage.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
       path: '/',

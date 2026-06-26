@@ -19,7 +19,7 @@
           <el-menu-item index="/search">
             <el-icon><Search /></el-icon> 知识检索
           </el-menu-item>
-          <el-menu-item index="/import">
+          <el-menu-item index="/import" v-if="authStore.isAdmin">
             <el-icon><Upload /></el-icon> 文档导入
           </el-menu-item>
           <el-menu-item index="/graph">
@@ -34,7 +34,7 @@
           <el-menu-item index="/departments" v-if="authStore.isAdmin">
             <el-icon><OfficeBuilding /></el-icon> 部门管理
           </el-menu-item>
-          <el-menu-item index="/history">
+          <el-menu-item index="/history" v-if="authStore.isAdmin">
             <el-icon><Clock /></el-icon> 导入历史
           </el-menu-item>
         </el-menu>

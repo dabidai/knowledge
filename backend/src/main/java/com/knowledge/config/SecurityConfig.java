@@ -48,6 +48,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/departments").authenticated()
                 .requestMatchers("/api/departments/**").hasRole("ADMIN")
                 .requestMatchers("/api/users/**").hasRole("ADMIN")
+                .requestMatchers("/api/import/**").hasRole("ADMIN")
                 // 其他所有端点需要认证
                 .anyRequest().authenticated()
             )
