@@ -10,7 +10,6 @@ import org.apache.poi.hwpf.usermodel.Picture;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
 import org.apache.poi.poifs.filesystem.DirectoryNode;
-import org.apache.poi.poifs.filesystem.DocumentEntry;
 import org.apache.poi.poifs.filesystem.DocumentInputStream;
 import org.apache.poi.poifs.filesystem.DocumentNode;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
@@ -28,6 +27,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -196,7 +197,7 @@ public class DocumentParser {
             // 如果没有找到 Content 文件，尝试读取所有 XML 文件
             if (sb.isEmpty()) {
                 entries = zip.entries();
-                while (entries.hasMoreElements()) {
+                while (entries.hasMoreElement s()) {
                     ZipEntry entry = entries.nextElement();
                     if (entry.getName().endsWith(".xml") && !entry.getName().equals("OFD.xml")) {
                         try (InputStream is = zip.getInputStream(entry)) {
@@ -305,59 +306,87 @@ public class DocumentParser {
     }
 
     /**
-     * 从 OLE2 文件系统直接提取文本（当 HWPFDocument 无法处理 WPS 特有格式时回退使用）
-     * 遍历所有文档流，尝试 UTF-16LE / UTF-8 解码，过滤二进制噪声
+     * 从 OLE2 文件系统扫描 Unicode 文本段（当 HWPFDocument 无法处理时回退）
+     * Word OLE2 流使用 UTF-16LE 编码，二进制格式数据中嵌入的文本段可通过
+     * 逐字节扫描有效 Unicode 字符范围来恢复。
      */
     private static String extractRawTextFromOle2(Path filePath) {
+        List<byte[]> allData = new ArrayList<>();
         try (InputStream is = Files.newInputStream(filePath);
              POIFSFileSystem fs = new POIFSFileSystem(is)) {
-            StringBuilder sb = new StringBuilder();
-            extractTextFromOle2Entries(fs.getRoot(), sb);
-            String result = sb.toString().trim();
-            return result.length() > 10 ? result : null;
+            collectOle2Streams(fs.getRoot(), allData);
         } catch (Exception e) {
-            log.debug("OLE2 原始文本提取失败: {}", e.getMessage());
+            log.debug("OLE2 文件系统打开失败: {}", e.getMessage());
             return null;
         }
+
+        StringBuilder result = new StringBuilder();
+        for (byte[] data : allData) {
+            scanUnicodeText(data, result);
+        }
+        String text = result.toString().trim();
+        return text.length() > 20 ? text : null;
     }
 
-    /** 递归遍历 OLE2 目录，读取文档流中的可打印文本 */
-    private static void extractTextFromOle2Entries(DirectoryNode dir, StringBuilder sb) {
+    /** 收集 OLE2 中所有非元数据的文档流字节数据 */
+    private static void collectOle2Streams(DirectoryNode dir, List<byte[]> out) {
         for (org.apache.poi.poifs.filesystem.Entry entry : dir) {
             if (entry.isDirectoryEntry()) {
-                extractTextFromOle2Entries((DirectoryNode) entry, sb);
+                collectOle2Streams((DirectoryNode) entry, out);
             } else if (entry.isDocumentEntry()) {
                 String name = entry.getName().toLowerCase();
-                // 跳过非文本流
                 if (name.contains("summaryinformation")
                         || name.contains("objectpool")
                         || name.equals("compobj")
                         || name.endsWith(".bin")) continue;
                 try (DocumentInputStream dis = new DocumentInputStream((DocumentNode) entry)) {
                     byte[] data = dis.readAllBytes();
-                    if (data.length < 8 || data.length > 10 * 1024 * 1024) continue;
-                    // 统计可打印字符比例，决定是否提取
-                    int printable = 0;
-                    for (byte b : data) {
-                        if (b >= 0x20 && b <= 0x7e) printable++;
-                        else if ((b & 0xff) >= 0xA0) printable++; // 中文字节
+                    if (data.length >= 20 && data.length <= 10 * 1024 * 1024) {
+                        out.add(data);
                     }
-                    if ((double) printable / data.length < 0.6) continue;
-                    // 用 UTF-8 解码
-                    String text = new String(data, java.nio.charset.StandardCharsets.UTF_8);
-                    // 进一步筛选：去除纯二进制片段
-                    StringBuilder clean = new StringBuilder();
-                    for (int i = 0; i < text.length(); i++) {
-                        char c = text.charAt(i);
-                        if (c >= 0x20 && c <= 0x7e) clean.append(c);
-                        else if (Character.isIdeographic(c) || Character.isLetter(c)) clean.append(c);
-                        else if (c == '\n' || c == '\r' || c == '\t') clean.append(c);
-                        else clean.append(' ');
-                    }
-                    String cleaned = clean.toString().replaceAll("\\s+", " ").trim();
-                    if (cleaned.length() > 20) sb.append(cleaned).append("\n");
                 } catch (Exception ignored) {}
             }
+        }
+    }
+
+    /**
+     * 以 UTF-16LE 逐字节扫描可读文本段
+     * Word 文档流使用 UTF-16LE 编码，但混杂二进制格式头。
+     * 有效 Unicode 范围：ASCII 可打印、CJK 统一表意文字、常见标点
+     */
+    private static void scanUnicodeText(byte[] data, StringBuilder out) {
+        StringBuilder sb = new StringBuilder();
+        boolean prevValid = false;
+        int maxLen = data.length & ~1;  // 对齐到偶数
+        for (int i = 0; i < maxLen; i += 2) {
+            int lo = data[i] & 0xff;
+            int hi = data[i + 1] & 0xff;
+            char c = (char) ((hi << 8) | lo);
+
+            boolean valid;
+            if (c >= 0x20 && c <= 0x7e) valid = true;               // ASCII 可打印
+            else if (c >= 0x4E00 && c <= 0x9FFF) valid = true;      // CJK 统一表意文字
+            else if (c >= 0x3000 && c <= 0x303F) valid = true;      // CJK 符号
+            else if (c >= 0xFF00 && c <= 0xFFEF) valid = true;      // 全角形式
+            else if (c == '\n' || c == '\r' || c == '\t') valid = true;
+            else if (c == 0x3000) valid = true;                     // 全角空格
+            else valid = false;
+
+            if (valid) {
+                if (!prevValid && sb.length() > 0 && sb.charAt(sb.length() - 1) != ' ') {
+                    sb.append(' ');
+                }
+                sb.append(c);
+                prevValid = true;
+            } else {
+                prevValid = false;
+            }
+        }
+
+        String text = sb.toString().replaceAll("\\s+", " ").trim();
+        // 至少 30 个有效字符才认为是有效文本段
+        if (text.length() > 30) {
+            out.append(text).append("\n");
         }
     }
 
