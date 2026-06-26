@@ -3,6 +3,8 @@ package com.knowledge.service;
 import com.knowledge.entity.*;
 import com.knowledge.repository.*;
 import com.opencsv.CSVReader;
+import com.opencsv.CSVReaderBuilder;
+import com.opencsv.RFC4180Parser;
 import com.opencsv.exceptions.CsvValidationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,8 +45,10 @@ public class CsvImportService {
         String encoding = detectEncoding(raw);
         log.debug("检测编码 {}: {}", filePath.getFileName(), encoding);
 
-        try (CSVReader reader = new CSVReader(
-                new InputStreamReader(new ByteArrayInputStream(raw), Charset.forName(encoding)))) {
+        try (CSVReader reader = new CSVReaderBuilder(
+                new InputStreamReader(new ByteArrayInputStream(raw), Charset.forName(encoding)))
+                .withCSVParser(new RFC4180Parser())
+                .build()) {
             List<String[]> rows = new ArrayList<>();
             String[] row;
             while ((row = reader.readNext()) != null) {
@@ -145,13 +149,10 @@ public class CsvImportService {
             String[] row = rows.get(i);
             if (row.length < 9) continue;
 
-            // 诊断：打印超长字段（定位 opencsv 解析差异用）
-            if (row.length > 9) {
-                log.warn("[诊断] item.csv 行{}: 列数={} (期望9), row[0]={}", i + 1, row.length, row.length > 0 ? row[0] : "N/A");
-            }
-            if (row[5].length() > 10 || row[8].length() > 20) {
-                log.warn("[诊断] item.csv 行{}: year.len={}, itemType.len={}, row[0]={}",
-                        i + 1, row[5].length(), row.length > 8 ? row[8].length() : -1, row[0]);
+            // 跳过 CSV 解析错乱导致列数异常的行（标题含逗号未正确引号包裹）
+            if (row.length != 9) {
+                log.warn("跳过异常行 {} (item.csv): {} 列, row[0]={}", i + 1, row.length, row[0].length() > 60 ? row[0].substring(0, 60) : row[0]);
+                continue;
             }
 
             String itemId = row[0].trim();
@@ -195,6 +196,11 @@ public class CsvImportService {
             String[] row = rows.get(i);
             if (row.length < 4) continue;
 
+            if (row.length != 4) {
+                log.warn("跳过异常行 {} (file_index.csv): {} 列", i + 1, row.length);
+                continue;
+            }
+
             String fileId = row[0].trim();
             String fileName = row[1].trim();
             String itemId = row[3].trim();
@@ -237,6 +243,11 @@ public class CsvImportService {
         for (int i = 1; i < rows.size(); i++) {
             String[] row = rows.get(i);
             if (row.length < 5) continue;
+
+            if (row.length != 5) {
+                log.warn("跳过异常行 {} (item_with_opinions.csv): {} 列", i + 1, row.length);
+                continue;
+            }
 
             Item item = itemRepo.findById(row[0].trim()).orElse(null);
 
