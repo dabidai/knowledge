@@ -197,7 +197,7 @@ public class DocumentParser {
             // 如果没有找到 Content 文件，尝试读取所有 XML 文件
             if (sb.isEmpty()) {
                 entries = zip.entries();
-                while (entries.hasMoreElement s()) {
+                while (entries.hasMoreElements()) {
                     ZipEntry entry = entries.nextElement();
                     if (entry.getName().endsWith(".xml") && !entry.getName().equals("OFD.xml")) {
                         try (InputStream is = zip.getInputStream(entry)) {
