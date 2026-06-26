@@ -108,6 +108,11 @@ public class ImportService {
         String batchId = UUID.randomUUID().toString().replace("-", "");
         boolean isPublic = "public".equals(targetDept);
 
+        ImportMetrics metrics = ImportMetrics.builder()
+                .batchId(batchId)
+                .taskStartTimeMs(System.currentTimeMillis())
+                .build();
+
         graphBuildService.ensureConstraints();
 
         // 扫描目录下所有文档文件
@@ -170,7 +175,7 @@ public class ImportService {
         for (int i = 0; i < docFiles.size(); i++) {
             Path docPath = docFiles.get(i);
             try {
-                String plainText = processDocument(docPath, targetDept, isPublic, batchId);
+                String plainText = processDocument(docPath, targetDept, isPublic, batchId, metrics);
                 String fileName = docPath.getFileName().toString();
                 Document matched = docRepo.findByStatus("matched").stream()
                         .filter(d -> d.getFileName() != null
@@ -209,6 +214,8 @@ public class ImportService {
         }
 
         log.info("目录导入完成: batchId={}, 文件数={}", batchId, docFiles.size());
+        metrics.setTotalFiles(docFiles.size());
+        metrics.logSummary();
         return batchId;
     }
 
@@ -216,6 +223,11 @@ public class ImportService {
     private String doImport(Path archivePath, String targetDept, String archiveName) throws Exception {
         String batchId = UUID.randomUUID().toString().replace("-", "");
         boolean isPublic = "public".equals(targetDept);
+
+        ImportMetrics metrics = ImportMetrics.builder()
+                .batchId(batchId)
+                .taskStartTimeMs(System.currentTimeMillis())
+                .build();
 
         // 1. 确保 Neo4j 约束就绪
         graphBuildService.ensureConstraints();
@@ -289,7 +301,7 @@ public class ImportService {
         for (int i = 0; i < docFiles.size(); i++) {
             Path docPath = docFiles.get(i);
             try {
-                String plainText = processDocument(docPath, targetDept, isPublic, batchId);
+                String plainText = processDocument(docPath, targetDept, isPublic, batchId, metrics);
                 // 从 DB 获取刚保存的文档 fileId
                 String fileName = docPath.getFileName().toString();
                 Document matched = docRepo.findByStatus("matched").stream()
@@ -331,6 +343,8 @@ public class ImportService {
 
         // 7. 保留工作目录以便后续断点续传（不删除）
         log.info("导入完成: batchId={}, 文件数={}, 工作目录保留", batchId, docFiles.size());
+        metrics.setTotalFiles(docFiles.size());
+        metrics.logSummary();
         return batchId;
     }
 
@@ -357,6 +371,11 @@ public class ImportService {
 
         boolean isPublic = "public".equals(task.getTargetDept());
         String targetDept = task.getTargetDept();
+
+        ImportMetrics metrics = ImportMetrics.builder()
+                .batchId(batchId)
+                .taskStartTimeMs(System.currentTimeMillis())
+                .build();
 
         // 收集已处理文档的文件名集合
         Set<String> processedNames = new HashSet<>();
@@ -393,6 +412,8 @@ public class ImportService {
             task.setCompletedAt(java.time.LocalDateTime.now());
             taskRepo.save(task);
             log.info("断点续传 —— 无剩余文件: batchId={}", batchId);
+            metrics.setTotalFiles(0);
+            metrics.logSummary();
             return;
         }
 
@@ -407,7 +428,7 @@ public class ImportService {
         for (int i = 0; i < remainingFiles.size(); i++) {
             Path docPath = remainingFiles.get(i);
             try {
-                processDocument(docPath, targetDept, isPublic, batchId);
+                processDocument(docPath, targetDept, isPublic, batchId, metrics);
                 task.setProcessedFiles(task.getProcessedFiles() + 1);
                 taskRepo.save(task);
             } catch (Exception e) {
@@ -422,6 +443,8 @@ public class ImportService {
         taskRepo.save(task);
 
         log.info("断点续传完成: batchId={}, 最终处理 {} 个文件", batchId, task.getProcessedFiles());
+        metrics.setTotalFiles(task.getProcessedFiles());
+        metrics.logSummary();
     }
 
     /**
@@ -437,9 +460,10 @@ public class ImportService {
 
     /** 处理单个文档：解析 → 存储 → Embedding → 索引，返回解析后的纯文本 */
     private String processDocument(Path docPath, String deptName, boolean isPublic,
-                                  String batchId) throws IOException {
+                                  String batchId, ImportMetrics metrics) throws IOException {
         String fileName = docPath.getFileName().toString();
         log.debug("处理文档: {}", fileName);
+        long docStart = System.currentTimeMillis();
 
         // 1. 解析文本 —— PDF 走双轨解析（原生文字 + OCR 降级），其他格式走普通解析
         String plainText;
@@ -451,6 +475,8 @@ public class ImportService {
             plainText = documentParser.parse(docPath);
         }
         String markdown = documentParser.toMarkdown(plainText);
+        long parseEnd = System.currentTimeMillis();
+        metrics.addParseTime(parseEnd - docStart);
 
         // 2. 在 document 表中匹配（按文件名）
         Optional<Document> matchOpt = docRepo.findByStatus("expected").stream()
@@ -512,13 +538,20 @@ public class ImportService {
             doc.setQualityGrade(pdfMeta.qualityGrade());
         }
         docRepo.save(doc);
+        long minioEnd = System.currentTimeMillis();
+        metrics.addMinioTime(minioEnd - parseEnd);
+        metrics.addTextSize(plainText.length());
 
         // 5. 文本分块 → Embedding → ES 索引
         List<String> chunks = splitText(plainText);
+        metrics.addChunks(chunks.size());
         List<ElasticsearchService.DocIndex> indexDocs = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
+            long embedStart = System.currentTimeMillis();
             float[] vector = aiClient.embed(chunk);
+            long embedEnd = System.currentTimeMillis();
+            metrics.addEmbedCall(embedEnd - embedStart, vector.length == 0);
 
             indexDocs.add(ElasticsearchService.DocIndex.builder()
                     .docId(doc.getFileId())
@@ -533,7 +566,13 @@ public class ImportService {
                     .chunkIndex(i)
                     .build());
         }
+        long esStart = System.currentTimeMillis();
         esService.bulkIndex(indexDocs);
+        long esEnd = System.currentTimeMillis();
+        metrics.addEsIndexTime(esEnd - esStart);
+        long docEnd = System.currentTimeMillis();
+        log.info("【性能埋点】文档处理完成: {}, 耗时={}ms, 分块={}, 文本大小={}KB",
+                fileName, docEnd - docStart, chunks.size(), plainText.length() / 1024);
 
         return plainText;
     }
@@ -726,5 +765,80 @@ public class ImportService {
                 try { Files.deleteIfExists(p); } catch (Exception ignored) {}
             });
         } catch (Exception ignored) {}
+    }
+
+    // ──── 基线性能指标采集 ────
+
+    /** 导入性能指标采集器 —— 收集并汇总导入全流程耗时/吞吐量数据 */
+    @Data
+    @Builder
+    public static class ImportMetrics {
+        private String batchId;
+        private long taskStartTimeMs;
+        private int totalFiles;
+        private long totalTextSizeBytes;
+        private int totalChunks;
+        private int embedCallCount;
+        private int embedFailCount;
+        private long totalEmbedTimeMs;
+        private long totalEsIndexTimeMs;
+        private long totalParseTimeMs;
+        private long totalMinioTimeMs;
+
+        public void addParseTime(long ms) { this.totalParseTimeMs += ms; }
+        public void addTextSize(long bytes) { this.totalTextSizeBytes += bytes; }
+        public void addMinioTime(long ms) { this.totalMinioTimeMs += ms; }
+        public void addChunks(int count) { this.totalChunks += count; }
+        public void addEmbedCall(long timeMs, boolean failed) {
+            this.embedCallCount++;
+            this.totalEmbedTimeMs += timeMs;
+            if (failed) this.embedFailCount++;
+        }
+        public void addEsIndexTime(long ms) { this.totalEsIndexTimeMs += ms; }
+
+        /** 输出格式化的性能指标汇总报告 */
+        public void logSummary() {
+            long totalTime = System.currentTimeMillis() - taskStartTimeMs;
+            double totalTimeSec = totalTime / 1000.0;
+            double totalTimeMin = totalTimeSec / 60.0;
+            double totalTimeHour = totalTimeMin / 60.0;
+
+            double textSizeMB = totalTextSizeBytes / 1024.0 / 1024.0;
+            double docsPerHour = totalTimeHour > 0 ? totalFiles / totalTimeHour : 0;
+            double chunksPerSec = totalTimeSec > 0 ? totalChunks / totalTimeSec : 0;
+            double avgEmbedRt = embedCallCount > 0 ? (double) totalEmbedTimeMs / embedCallCount : 0;
+            double embedQps = totalTimeSec > 0 && embedCallCount > 0 ? embedCallCount / totalTimeSec : 0;
+            double avgEsWrite = totalChunks > 0 ? (double) totalEsIndexTimeMs / totalChunks : 0;
+
+            log.info("");
+            log.info("========== 基线性能指标汇总 ==========");
+            log.info("批次: {}", batchId);
+            log.info("文档数: {}", totalFiles);
+            log.info("文本总量: {} MB ({} bytes)", String.format("%.2f", textSizeMB), totalTextSizeBytes);
+            log.info("分块总数: {}", totalChunks);
+            log.info("");
+            log.info("【耗时】");
+            log.info("总耗时: {} ms ({} min, {} h)", totalTime,
+                    String.format("%.2f", totalTimeMin), String.format("%.2f", totalTimeHour));
+            log.info("解析耗时: {} ms", totalParseTimeMs);
+            log.info("Embedding 总耗时: {} ms (含网络+推理)", totalEmbedTimeMs);
+            log.info("ES 索引总耗时: {} ms", totalEsIndexTimeMs);
+            log.info("MinIO 上传总耗时: {} ms", totalMinioTimeMs);
+            log.info("");
+            log.info("【吞吐量】");
+            log.info("文档处理速度: {} 文档/小时", String.format("%.2f", docsPerHour));
+            log.info("Chunk 处理速度: {} chunk/s", String.format("%.2f", chunksPerSec));
+            log.info("");
+            log.info("【Embedding】");
+            log.info("调用总次数: {}", embedCallCount);
+            log.info("失败次数: {}", embedFailCount);
+            log.info("平均 RT: {} ms", String.format("%.1f", avgEmbedRt));
+            log.info("QPS: {}", String.format("%.2f", embedQps));
+            log.info("");
+            log.info("【ES 写入】");
+            log.info("平均单条写入: {} ms", String.format("%.1f", avgEsWrite));
+            log.info("");
+            log.info("======================================");
+        }
     }
 }

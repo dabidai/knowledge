@@ -35,6 +35,7 @@ public class AIClient {
 
     /** 生成 Embedding */
     public float[] embed(String text) {
+        long start = System.currentTimeMillis();
         try {
             EmbedRequest req = new EmbedRequest(text);
             String json = objectMapper.writeValueAsString(req);
@@ -45,8 +46,12 @@ public class AIClient {
                     .body(json)
                     .retrieve()
                     .body(EmbedResponse.class);
+            long elapsed = System.currentTimeMillis() - start;
+            log.info("【性能埋点】Embed 调用成功, 耗时={}ms, 文本长度={}", elapsed, text.length());
             return resp != null ? resp.embedding : new float[0];
         } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - start;
+            log.error("【性能埋点】Embed 调用失败, 耗时={}ms, 文本长度={}", elapsed, text.length());
             log.error("Embedding 生成失败", e);
             return new float[0];
         }
