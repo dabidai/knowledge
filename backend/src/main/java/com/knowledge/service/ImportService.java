@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -39,6 +40,8 @@ public class ImportService {
     @Autowired
     @Qualifier("importExecutor")
     private ThreadPoolTaskExecutor importExecutor;
+    /** 事务模板 —— 用于在异步线程中包装数据操作 */
+    private final TransactionTemplate transactionTemplate;
     /** Neo4j 图谱构建服务 —— 导入过程中同步建图 */
     private final GraphBuildService graphBuildService;
     private final ImportTaskRepository taskRepo;
@@ -533,6 +536,18 @@ public class ImportService {
             doc.setQualityGrade(pdfMeta.qualityGrade());
         }
         docRepo.save(doc);
+
+        // 预取懒加载的 Item 字段 —— save 事务已提交，需新事务访问
+        String itemTitle = null;
+        String itemCategory = null;
+        try {
+            itemTitle = transactionTemplate.execute(s ->
+                    doc.getItem() != null ? doc.getItem().getTitle() : null);
+            itemCategory = transactionTemplate.execute(s ->
+                    doc.getItem() != null ? doc.getItem().getCategory() : null);
+        } catch (Exception e) {
+            // LazyInitializationException 等，保持 null
+        }
         long minioEnd = System.currentTimeMillis();
         metrics.addMinioTime(minioEnd - parseEnd);
         metrics.addTextSize(plainText.length());
@@ -565,8 +580,8 @@ public class ImportService {
                     .fileName(doc.getFileName())
                     .deptName(deptName)
                     .isPublic(isPublic)
-                    .itemTitle(doc.getItem() != null ? doc.getItem().getTitle() : null)
-                    .itemCategory(doc.getItem() != null ? doc.getItem().getCategory() : null)
+                    .itemTitle(itemTitle)
+                    .itemCategory(itemCategory)
                     .content(chunks.get(i))
                     .contentVector(vector)
                     .minioPath(doc.getMinioPath())
