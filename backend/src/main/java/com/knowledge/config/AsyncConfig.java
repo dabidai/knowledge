@@ -12,7 +12,7 @@ public class AsyncConfig {
 
     /** 导入专用线程池：单线程顺序执行，避免并发导入争抢资源 */
     @Bean("importExecutor")
-    public Executor importExecutor() {
+    public ThreadPoolTaskExecutor importExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(1);
         executor.setMaxPoolSize(1);
