@@ -31,3 +31,6 @@ ai-service/ai-models/
 *.PDF
 *.tar
 *.ps1
+*.tar.gz
+
+onnx-model/
