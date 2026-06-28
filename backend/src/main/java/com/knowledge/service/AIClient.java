@@ -57,7 +57,30 @@ public class AIClient {
         }
     }
 
-    /** RAG 问答 */
+    /** 批量生成 Embedding —— 一次 HTTP 请求处理多条，减少网络往返 */
+    public List<float[]> embedBatch(List<String> texts) {
+        if (texts == null || texts.isEmpty()) return List.of();
+        long start = System.currentTimeMillis();
+        try {
+            EmbedBatchRequest req = new EmbedBatchRequest(texts);
+            String json = objectMapper.writeValueAsString(req);
+            EmbedBatchResponse resp = restClient.post()
+                    .uri(aiServiceUrl + "/embed-batch")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(json)
+                    .retrieve()
+                    .body(EmbedBatchResponse.class);
+            long elapsed = System.currentTimeMillis() - start;
+            log.info("【性能埋点】EmbedBatch 调用成功, 条数={}, 耗时={}ms, 平均={}ms/条",
+                    texts.size(), elapsed,
+                    texts.size() > 0 ? String.format("%.1f", (double) elapsed / texts.size()) : "N/A");
+            return resp != null ? resp.embeddings : List.of();
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - start;
+            log.error("【性能埋点】EmbedBatch 调用失败, 条数={}, 耗时={}ms", texts.size(), elapsed, e);
+            return List.of();
+        }
+    }
     public String ask(String question, List<String> contexts) {
         try {
             AskRequest req = new AskRequest(question, contexts);
@@ -121,6 +144,18 @@ public class AIClient {
     public static class EmbedResponse {
         @JsonProperty("embedding")
         private float[] embedding;
+    }
+
+    @Data
+    public static class EmbedBatchRequest {
+        private List<String> texts;
+        public EmbedBatchRequest() {}
+        public EmbedBatchRequest(List<String> texts) { this.texts = texts; }
+    }
+
+    @Data
+    public static class EmbedBatchResponse {
+        private List<float[]> embeddings;
     }
 
     @Data

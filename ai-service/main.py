@@ -137,6 +137,12 @@ class EmbedRequest(BaseModel):
 class EmbedResponse(BaseModel):
     embedding: List[float]
 
+class EmbedBatchRequest(BaseModel):
+    texts: List[str]
+
+class EmbedBatchResponse(BaseModel):
+    embeddings: List[List[float]]
+
 class AskRequest(BaseModel):
     question: str
     contexts: List[str]
@@ -170,6 +176,25 @@ async def embed(req: EmbedRequest):
         return EmbedResponse(embedding=embedding.tolist())
     except Exception as e:
         logger.error(f"Embedding 失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/embed-batch", response_model=EmbedBatchResponse)
+async def embed_batch(req: EmbedBatchRequest):
+    """批量将多个文本转换为向量 —— 一次 HTTP 请求处理多条，减少网络往返"""
+    if embedder is None:
+        raise HTTPException(status_code=503, detail="Embedding 模型未加载")
+
+    try:
+        embeddings = embedder.encode(
+            req.texts,
+            normalize_embeddings=True,
+            batch_size=32,
+            show_progress_bar=False
+        )
+        return EmbedBatchResponse(embeddings=embeddings.tolist())
+    except Exception as e:
+        logger.error(f"批量 Embedding 失败: texts={len(req.texts)}, error={e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

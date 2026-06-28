@@ -553,16 +553,18 @@ public class ImportService {
         metrics.addMinioTime(minioEnd - parseEnd);
         metrics.addTextSize(plainText.length());
 
-        // 5. 文本分块 → Embedding → ES 索引
+        // 5. 文本分块 → 批量 Embedding → ES 索引
         List<String> chunks = splitText(plainText);
         metrics.addChunks(chunks.size());
+
+        long embedStart = System.currentTimeMillis();
+        List<float[]> vectors = aiClient.embedBatch(chunks);
+        long embedEnd = System.currentTimeMillis();
+        metrics.addEmbedCall(embedEnd - embedStart, vectors.isEmpty());
+
         List<ElasticsearchService.DocIndex> indexDocs = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            long embedStart = System.currentTimeMillis();
-            float[] vector = aiClient.embed(chunk);
-            long embedEnd = System.currentTimeMillis();
-            metrics.addEmbedCall(embedEnd - embedStart, vector.length == 0);
+            float[] vector = i < vectors.size() ? vectors.get(i) : new float[0];
 
             indexDocs.add(ElasticsearchService.DocIndex.builder()
                     .docId(doc.getFileId())
@@ -571,7 +573,7 @@ public class ImportService {
                     .isPublic(isPublic)
                     .itemTitle(doc.getItem() != null ? doc.getItem().getTitle() : null)
                     .itemCategory(doc.getItem() != null ? doc.getItem().getCategory() : null)
-                    .content(chunk)
+                    .content(chunks.get(i))
                     .contentVector(vector)
                     .minioPath(doc.getMinioPath())
                     .chunkIndex(i)
