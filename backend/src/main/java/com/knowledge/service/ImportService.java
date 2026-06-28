@@ -6,7 +6,10 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -32,6 +35,10 @@ public class ImportService {
     private final MinioService minioService;
     private final ElasticsearchService esService;
     private final AIClient aiClient;
+    /** 异步导入执行器 —— 避免大导入阻塞 HTTP 请求线程 */
+    @Autowired
+    @Qualifier("importExecutor")
+    private ThreadPoolTaskExecutor importExecutor;
     /** Neo4j 图谱构建服务 —— 导入过程中同步建图 */
     private final GraphBuildService graphBuildService;
     private final ImportTaskRepository taskRepo;
@@ -64,18 +71,16 @@ public class ImportService {
      * @param file      上传的压缩包
      * @param targetDept 目标部门 或 "public"
      */
-    @Transactional
     public String importArchive(MultipartFile file, String targetDept) throws Exception {
         // 先存为临时文件，复用 doImport 逻辑
         Path tempDir = Path.of(workDir, "uploads");
         Files.createDirectories(tempDir);
         Path temp = tempDir.resolve(UUID.randomUUID().toString().replace("-", ""));
         Files.copy(file.getInputStream(), temp, StandardCopyOption.REPLACE_EXISTING);
-        try {
-            return doImport(temp, targetDept, file.getOriginalFilename());
-        } finally {
-            Files.deleteIfExists(temp);
-        }
+
+        String fileName = file.getOriginalFilename();
+        return submitAsyncImport(batchId -> doImport(temp, targetDept, fileName, batchId), targetDept, fileName,
+                () -> { try { Files.deleteIfExists(temp); } catch (Exception ignored) {} });
     }
 
     /**
@@ -83,7 +88,6 @@ public class ImportService {
      * @param pathStr    服务器上的压缩包绝对路径
      * @param targetDept 目标部门 或 "public"
      */
-    @Transactional
     public String importFromPath(String pathStr, String targetDept) throws Exception {
         Path path = Path.of(pathStr).toAbsolutePath().normalize();
 
@@ -91,7 +95,8 @@ public class ImportService {
             throw new IllegalArgumentException("文件不存在或不是普通文件");
         }
 
-        return doImport(path, targetDept, path.getFileName().toString());
+        String fileName = path.getFileName().toString();
+        return submitAsyncImport(batchId -> doImport(path, targetDept, fileName, batchId), targetDept, fileName, null);
     }
 
     /**
@@ -99,7 +104,6 @@ public class ImportService {
      * @param dirPathStr 服务器上的目录绝对路径
      * @param targetDept 目标部门 或 "public"
      */
-    @Transactional
     public String importFromDir(String dirPathStr, String targetDept) throws Exception {
         Path dirPath = Path.of(dirPathStr).toAbsolutePath().normalize();
 
@@ -107,7 +111,16 @@ public class ImportService {
             throw new IllegalArgumentException("路径不存在或不是目录");
         }
 
-        String batchId = UUID.randomUUID().toString().replace("-", "");
+        return submitAsyncImport(batchId -> doImportDir(dirPath, targetDept, batchId), targetDept,
+                "目录: " + dirPath.getFileName().toString(), null);
+    }
+
+    /**
+     * 目录导入核心逻辑 —— 异步执行。
+     * 扫描目录 → CSV 元数据 → 文档解析 → Embedding → ES 索引 → 交叉引用检测
+     */
+    @SuppressWarnings("unused")
+    private String doImportDir(Path dirPath, String targetDept, String batchId) throws Exception {
         boolean isPublic = "public".equals(targetDept);
 
         ImportMetrics metrics = ImportMetrics.builder()
@@ -116,6 +129,12 @@ public class ImportService {
                 .build();
 
         graphBuildService.ensureConstraints();
+
+        // 从 submitAsyncImport 已创建的 task 开始
+        ImportTask task = taskRepo.findByBatchId(batchId)
+                .orElseThrow(() -> new IllegalStateException("任务不存在: " + batchId));
+        task.setArchiveName("目录: " + dirPath.getFileName());
+        task.setTotalFiles(0);
 
         // 扫描目录下所有文档文件
         List<Path> docFiles = new ArrayList<>();
@@ -143,14 +162,9 @@ public class ImportService {
             throw new IllegalArgumentException("目录中未找到支持的文档或CSV文件: " + dirPath);
         }
 
-        // 创建导入任务
-        ImportTask task = ImportTask.builder()
-                .batchId(batchId)
-                .archiveName("目录: " + dirPath.getFileName())
-                .targetDept(targetDept)
-                .status("metadata_parsed")
-                .totalFiles(Math.max(csvFiles.size(), 1) + docFiles.size())
-                .build();
+        // 更新任务：记录总文件数
+        task.setStatus("metadata_parsed");
+        task.setTotalFiles(Math.max(csvFiles.size(), 1) + docFiles.size());
         taskRepo.save(task);
 
         // 解析元数据 —— user.csv 必须先于 item.csv，确保 Department 节点
@@ -222,8 +236,7 @@ public class ImportService {
     }
 
     /** 核心导入逻辑 —— 解压、解析元数据、解析文档、建图 */
-    private String doImport(Path archivePath, String targetDept, String archiveName) throws Exception {
-        String batchId = UUID.randomUUID().toString().replace("-", "");
+    private String doImport(Path archivePath, String targetDept, String archiveName, String batchId) throws Exception {
         boolean isPublic = "public".equals(targetDept);
 
         ImportMetrics metrics = ImportMetrics.builder()
@@ -234,14 +247,10 @@ public class ImportService {
         // 1. 确保 Neo4j 约束就绪
         graphBuildService.ensureConstraints();
 
-        // 2. 创建导入任务
-        ImportTask task = ImportTask.builder()
-                .batchId(batchId)
-                .archiveName(archiveName)
-                .targetDept(targetDept)
-                .status("pending")
-                .build();
-        taskRepo.save(task);
+        // 2. 使用 submitAsyncImport 已创建的导入任务
+        ImportTask task = taskRepo.findByBatchId(batchId)
+                .orElseThrow(() -> new IllegalStateException("任务不存在: " + batchId));
+        task.setArchiveName(archiveName);
 
         // 3. 解压至工作目录（持久化，支持断点续传）
         Path extractDir = Path.of(workDir, batchId);
@@ -767,6 +776,55 @@ public class ImportService {
                 try { Files.deleteIfExists(p); } catch (Exception ignored) {}
             });
         } catch (Exception ignored) {}
+    }
+
+    // ──── 异步导入编排 ────
+
+    /** 异步提交导入任务：创建初始记录 → 后台执行 → 立即返回 batchId */
+    private String submitAsyncImport(ImportTaskRunnable importLogic, String targetDept,
+                                     String archiveName, Runnable cleanup) {
+        String batchId = UUID.randomUUID().toString().replace("-", "");
+
+        ImportTask task = ImportTask.builder()
+                .batchId(batchId)
+                .archiveName(archiveName)
+                .targetDept(targetDept)
+                .status("pending")
+                .build();
+        taskRepo.save(task);
+
+        importExecutor.submit(() -> {
+            try {
+                importLogic.run(batchId);
+            } catch (Exception e) {
+                log.error("异步导入失败: batchId={}", batchId, e);
+                markTaskFailed(batchId, e.getMessage());
+            } finally {
+                if (cleanup != null) {
+                    try { cleanup.run(); } catch (Exception ignored) {}
+                }
+            }
+        });
+
+        return batchId;
+    }
+
+    /** 标记导入任务失败 */
+    private void markTaskFailed(String batchId, String error) {
+        try {
+            ImportTask t = taskRepo.findByBatchId(batchId).orElse(null);
+            if (t != null) {
+                t.setStatus("failed");
+                t.setErrors(error);
+                taskRepo.save(t);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /** 异步导入执行体 —— 接收 batchId 在后台运行 */
+    @FunctionalInterface
+    private interface ImportTaskRunnable {
+        void run(String batchId) throws Exception;
     }
 
     // ──── 基线性能指标采集 ────
