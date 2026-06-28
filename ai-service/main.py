@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b-q4_K_M")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "pytorch")  # "pytorch" | "onnx"
 
 # ============ 全局模型实例 ============
 embedder: Optional[SentenceTransformer] = None
@@ -108,9 +109,23 @@ async def lifespan(app: FastAPI):
     """启动时加载模型，关闭时释放资源"""
     global embedder, llm
 
-    logger.info(f"加载 Embedding 模型: {EMBEDDING_MODEL}")
-    embedder = SentenceTransformer(EMBEDDING_MODEL)
-    logger.info("Embedding 模型加载完成")
+    # Embedding 模型 —— 支持 ONNX 后端加速
+    logger.info(f"加载 Embedding 模型: {EMBEDDING_MODEL}, 后端: {EMBEDDING_BACKEND}")
+    if EMBEDDING_BACKEND == "onnx":
+        try:
+            embedder = SentenceTransformer(
+                EMBEDDING_MODEL,
+                backend="onnx",
+                model_kwargs={"provider": "CPUExecutionProvider"}
+            )
+            logger.info("Embedding 模型加载完成 (ONNX 后端)")
+        except Exception as e:
+            logger.warning(f"ONNX 后端加载失败，回退至 PyTorch: {e}")
+            embedder = SentenceTransformer(EMBEDDING_MODEL)
+            logger.info("Embedding 模型加载完成 (PyTorch 回退)")
+    else:
+        embedder = SentenceTransformer(EMBEDDING_MODEL)
+        logger.info("Embedding 模型加载完成 (PyTorch 后端)")
 
     logger.info(f"连接 Ollama: {OLLAMA_HOST}, 模型: {OLLAMA_MODEL}")
     llm = ChatOllama(

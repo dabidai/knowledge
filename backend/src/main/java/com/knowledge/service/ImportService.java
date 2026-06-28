@@ -187,20 +187,11 @@ public class ImportService {
         task.setProcessedFiles(csvFiles.size());
         taskRepo.save(task);
 
-        Map<String, String> docTextMap = new LinkedHashMap<>();
         for (int i = 0; i < docFiles.size(); i++) {
             Path docPath = docFiles.get(i);
             try {
                 String plainText = processDocument(docPath, targetDept, isPublic, batchId, metrics);
                 String fileName = docPath.getFileName().toString();
-                Document matched = docRepo.findByStatus("matched").stream()
-                        .filter(d -> d.getFileName() != null
-                                && (d.getFileName().contains(extractBaseName(fileName))
-                                    || fileName.contains(extractBaseName(d.getFileName()))))
-                        .findFirst().orElse(null);
-                if (matched != null && plainText != null && !plainText.isEmpty()) {
-                    docTextMap.put(matched.getFileId(), plainText);
-                }
                 task.setProcessedFiles(csvFiles.size() + i + 1);
                 taskRepo.save(task);
             } catch (Exception e) {
@@ -218,7 +209,10 @@ public class ImportService {
             List<GraphBuildService.DocRef> docRefs = new ArrayList<>();
             for (Document d : docRepo.findAll()) {
                 if (d.getTextLength() == null || d.getTextLength() == 0) continue;
-                String content = docTextMap.getOrDefault(d.getFileId(), "");
+                String content = d.getMinioPath() != null
+                        ? minioService.getMarkdown(d.getMinioPath())
+                        : "";
+                if (content == null) content = "";
                 String categoryNo = d.getItem() != null ? d.getItem().getCategoryNo() : null;
                 docRefs.add(new GraphBuildService.DocRef(d.getFileId(), content, categoryNo));
             }
@@ -306,23 +300,10 @@ public class ImportService {
         task.setProcessedFiles(csvCount);
         taskRepo.save(task);
 
-        // 收集 (fileId → 解析文本) 映射用于后续交叉引用检测
-        Map<String, String> docTextMap = new LinkedHashMap<>();
-
         for (int i = 0; i < docFiles.size(); i++) {
             Path docPath = docFiles.get(i);
             try {
                 String plainText = processDocument(docPath, targetDept, isPublic, batchId, metrics);
-                // 从 DB 获取刚保存的文档 fileId
-                String fileName = docPath.getFileName().toString();
-                Document matched = docRepo.findByStatus("matched").stream()
-                        .filter(d -> d.getFileName() != null
-                                && (d.getFileName().contains(extractBaseName(fileName))
-                                    || fileName.contains(extractBaseName(d.getFileName()))))
-                        .findFirst().orElse(null);
-                if (matched != null && plainText != null && !plainText.isEmpty()) {
-                    docTextMap.put(matched.getFileId(), plainText);
-                }
                 task.setProcessedFiles(csvCount + i + 1);
                 taskRepo.save(task);
             } catch (Exception e) {
@@ -341,7 +322,10 @@ public class ImportService {
             List<GraphBuildService.DocRef> docRefs = new ArrayList<>();
             for (Document d : docRepo.findAll()) {
                 if (d.getTextLength() == null || d.getTextLength() == 0) continue;
-                String content = docTextMap.getOrDefault(d.getFileId(), "");
+                String content = d.getMinioPath() != null
+                        ? minioService.getMarkdown(d.getMinioPath())
+                        : "";
+                if (content == null) content = "";
                 String categoryNo = d.getItem() != null ? d.getItem().getCategoryNo() : null;
                 docRefs.add(new GraphBuildService.DocRef(d.getFileId(), content, categoryNo));
             }
@@ -553,8 +537,15 @@ public class ImportService {
         metrics.addMinioTime(minioEnd - parseEnd);
         metrics.addTextSize(plainText.length());
 
-        // 5. 文本分块 → 批量 Embedding → ES 索引
+        // 5. 文本分块 → 过滤垃圾 → 批量 Embedding → 流式 ES 索引
         List<String> chunks = splitText(plainText);
+        chunks = chunks.stream().filter(c -> !isGarbage(c)).collect(java.util.stream.Collectors.toList());
+
+        // 单文件 chunk 上限：防止 OFD 垃圾坐标文本产生海量分块
+        final int MAX_CHUNKS_PER_DOC = 100;
+        if (chunks.size() > MAX_CHUNKS_PER_DOC) {
+            chunks = chunks.subList(0, MAX_CHUNKS_PER_DOC);
+        }
         metrics.addChunks(chunks.size());
 
         long embedStart = System.currentTimeMillis();
@@ -562,11 +553,14 @@ public class ImportService {
         long embedEnd = System.currentTimeMillis();
         metrics.addEmbedCall(embedEnd - embedStart, vectors.isEmpty());
 
-        List<ElasticsearchService.DocIndex> indexDocs = new ArrayList<>();
+        // 流式写 ES：每 200 条发一批，避免单文档 chunk 过多时内存堆积
+        final int ES_BATCH_SIZE = 200;
+        long esStart = System.currentTimeMillis();
+        List<ElasticsearchService.DocIndex> esBatch = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
             float[] vector = i < vectors.size() ? vectors.get(i) : new float[0];
 
-            indexDocs.add(ElasticsearchService.DocIndex.builder()
+            esBatch.add(ElasticsearchService.DocIndex.builder()
                     .docId(doc.getFileId())
                     .fileName(doc.getFileName())
                     .deptName(deptName)
@@ -578,9 +572,15 @@ public class ImportService {
                     .minioPath(doc.getMinioPath())
                     .chunkIndex(i)
                     .build());
+
+            if (esBatch.size() >= ES_BATCH_SIZE) {
+                esService.bulkIndex(esBatch);
+                esBatch.clear();
+            }
         }
-        long esStart = System.currentTimeMillis();
-        esService.bulkIndex(indexDocs);
+        if (!esBatch.isEmpty()) {
+            esService.bulkIndex(esBatch);
+        }
         long esEnd = System.currentTimeMillis();
         metrics.addEsIndexTime(esEnd - esStart);
         long docEnd = System.currentTimeMillis();
@@ -755,6 +755,56 @@ public class ImportService {
         String name = path.contains("/") ? path.substring(path.lastIndexOf("/") + 1) : path;
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /** 判断文本块是否为垃圾（OFD 坐标指令、OCR 碎片等），避免送往 Embedding 产生垃圾向量 */
+    private boolean isGarbage(String text) {
+        if (text == null || text.isEmpty()) return true;
+
+        String[] lines = text.split("\n");
+        int coordLines = 0;
+        int totalChinese = 0;
+        int totalAlphaNum = 0;
+
+        // SVG/OFD 路径指令模式: M/L/Q/C 后跟数字坐标
+        java.util.regex.Pattern coordPtn = java.util.regex.Pattern.compile(
+                "[MLQC]\\s+[\\d.]+[\\s,]+[\\d.]+"
+        );
+
+        for (String line : lines) {
+            if (coordPtn.matcher(line).find()) {
+                coordLines++;
+            }
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (Character.UnicodeBlock.of(c) == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS) {
+                    totalChinese++;
+                } else if (Character.isLetterOrDigit(c)) {
+                    totalAlphaNum++;
+                }
+            }
+        }
+
+        int totalChars = text.length();
+        if (totalChars == 0) return true;
+
+        // 规则1: 坐标指令行占比 > 50%
+        if (lines.length > 0 && (double) coordLines / lines.length > 0.5) {
+            return true;
+        }
+
+        // 规则2: 非汉字符号占比 > 80%
+        int nonChinese = totalChars - totalChinese;
+        if ((double) nonChinese / totalChars > 0.8) {
+            return true;
+        }
+
+        // 规则3: 有效汉字 < 20 个
+        if (totalChinese < 20) {
+            return true;
+        }
+
+        return false;
     }
 
     private String detectMimeType(String fileName) {
