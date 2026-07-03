@@ -58,6 +58,9 @@ public class PdfParser {
     /** 解析结果：文本 + 质量元数据 */
     public record PdfParseResult(String text, int totalPages, int ocrPages, String qualityGrade) {}
 
+    /** 处理单页结果：提取的文本 + 是否走了 OCR */
+    private record PageResult(String text, boolean ocrUsed) {}
+
     /** 解析 PDF 文件，返回文本和质量元数据 */
     public PdfParseResult parse(Path filePath) throws IOException {
         try (PDDocument doc = Loader.loadPDF(filePath.toFile())) {
@@ -68,10 +71,11 @@ public class PdfParser {
 
             for (int i = 0; i < totalPages; i++) {
                 try {
-                    String pageText = processPage(doc, renderer, i);
-                    if (pageText != null && !pageText.isBlank()) {
-                        fullText.append(pageText).append("\n");
+                    PageResult result = processPage(doc, renderer, i);
+                    if (result.text() != null && !result.text().isBlank()) {
+                        fullText.append(result.text()).append("\n");
                     }
+                    if (result.ocrUsed()) ocrPages++;
                 } catch (Exception e) {
                     log.error("第 {} 页解析失败", i + 1, e);
                     fullText.append("[第").append(i + 1).append("页解析失败]\n");
@@ -96,7 +100,7 @@ public class PdfParser {
     }
 
     /** 处理单页：文字提取 → 质量检查 → OCR 降级 */
-    private String processPage(PDDocument doc, PDFRenderer renderer, int pageIndex) throws IOException {
+    private PageResult processPage(PDDocument doc, PDFRenderer renderer, int pageIndex) throws IOException {
         PDPage page = doc.getPage(pageIndex);
         float pageHeight = page.getMediaBox().getHeight();
 
@@ -109,15 +113,16 @@ public class PdfParser {
         // 2. 用 RAW 文本做质量判定（避免页眉有文字但正文是扫描件时漏判）
         String rawText = extractor.getRawText();
 
-        // 3. 质量判定
-        if (needsOcr(rawText)) {
-            log.debug("第 {} 页触发 OCR ({} 字符, 有效比 {:.0f}%)",
-                    pageIndex + 1, rawText.trim().length(), validRatio(rawText) * 100);
-            return ocrPage(renderer, pageIndex);
+        // 3. 质量判定（用 trimmed 消除首尾空白对字数的影响）
+        String trimmed = rawText.trim();
+        if (needsOcr(trimmed)) {
+            log.debug("第 {} 页触发 OCR ({} 字符, 有效比 {}%)",
+                    pageIndex + 1, trimmed.length(), Math.round(validRatio(trimmed) * 100));
+            return new PageResult(ocrPage(renderer, pageIndex), true);
         }
 
         // 4. 原生文字达标，返回过滤页眉页脚后的文本
-        return extractor.getBodyText();
+        return new PageResult(extractor.getBodyText(), false);
     }
 
     /** 质量判定：字数不足 或 有效字符占比低于阈值 → 需要 OCR */
