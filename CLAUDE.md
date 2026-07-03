@@ -397,7 +397,7 @@ sleep 10 && ss -tlnp | grep 8000
 cd /home/ubantu/llm/docker/anythingllm/knowledge/backend
 mvn package -DskipTests -q
 kill $(ss -tlnp | grep 8080 | grep -oP 'pid=\K\d+') 2>/dev/null
-LOG_FILE="app-$(date +%Y%m%d-%H%M%S).log"
+LOG_FILE="app-$(date +%Y%m%d-%H).log"
 nohup java -jar target/knowledge-base-0.1.0.jar > "$LOG_FILE" 2>&1 &
 ln -sf "$LOG_FILE" app.log
 sleep 3 && ss -tlnp | grep 8080
