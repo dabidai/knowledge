@@ -600,7 +600,7 @@ public class ImportService {
         metrics.addEsIndexTime(esEnd - esStart);
         long docEnd = System.currentTimeMillis();
         log.info("【性能埋点】文档处理完成: {}, 耗时={}ms, 分块={}, 文本大小={}KB",
-                fileName, docEnd - docStart, chunks.size(), plainText.length() / 1024);
+                fileName, docEnd - docStart, chunks.size(), String.format("%.1f", plainText.length() / 1024.0));
 
         return plainText;
     }
