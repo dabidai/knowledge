@@ -379,23 +379,45 @@ mvn test                           # ❌
 
 ## 十、服务器运维命令
 
+### 启动顺序（必须按此顺序）
+
 ```bash
-# 后端编译 + 启动
+# 1. 基础设施（Docker 容器）
+cd /home/ubantu/llm/docker/anythingllm/knowledge/docker
+docker compose up -d
+
+# 2. AI 服务（FastAPI，端口 8000）
+cd /home/ubantu/llm/docker/anythingllm/knowledge/ai-service
+source venv/bin/activate
+kill $(ss -tlnp | grep 8000 | grep -oP 'pid=\K\d+') 2>/dev/null
+EMBEDDING_MODEL=./models/bge-large-zh-v1.5-local OLLAMA_MODEL=qwen3:32b nohup uvicorn main:app --host 0.0.0.0 --port 8000 > ai-service.log 2>&1 &
+sleep 10 && ss -tlnp | grep 8000
+
+# 3. 后端（Spring Boot，端口 8080）
 cd /home/ubantu/llm/docker/anythingllm/knowledge/backend
 mvn package -DskipTests -q
 kill $(ss -tlnp | grep 8080 | grep -oP 'pid=\K\d+') 2>/dev/null
-nohup java -jar target/knowledge-base-0.1.0.jar > app.log 2>&1 &
+LOG_FILE="app-$(date +%Y%m%d-%H%M%S).log"
+nohup java -jar target/knowledge-base-0.1.0.jar > "$LOG_FILE" 2>&1 &
+ln -sf "$LOG_FILE" app.log
 sleep 3 && ss -tlnp | grep 8080
 
-# 前端启动
+# 4. 前端（Vue，端口 3000）
 cd /home/ubantu/llm/docker/anythingllm/knowledge/frontend
 kill $(ss -tlnp | grep 3000 | grep -oP 'pid=\K\d+') 2>/dev/null
 nohup npm run dev -- --host > frontend.log 2>&1 &
+```
 
-# 拉取更新
-cd /home/ubantu/llm/docker/anythingllm/knowledge && git pull gitee master
+### 查看状态
 
-# 查看状态
-ss -tlnp | grep -E '8080|3000'
+```bash
+ss -tlnp | grep -E '8000|8080|3000'
 tail -50 /home/ubantu/llm/docker/anythingllm/knowledge/backend/app.log
+tail -20 /home/ubantu/llm/docker/anythingllm/knowledge/ai-service/ai-service.log
+```
+
+### 拉取更新
+
+```bash
+cd /home/ubantu/llm/docker/anythingllm/knowledge && git pull gitee master
 ```
