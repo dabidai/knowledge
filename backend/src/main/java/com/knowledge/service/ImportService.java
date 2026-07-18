@@ -563,41 +563,45 @@ public class ImportService {
         }
         metrics.addChunks(chunks.size());
 
-        long embedStart = System.currentTimeMillis();
-        List<float[]> vectors = aiClient.embedBatch(chunks);
-        long embedEnd = System.currentTimeMillis();
-        metrics.addEmbedCall(embedEnd - embedStart, vectors.isEmpty());
+        if (chunks.isEmpty()) {
+            metrics.addEmptyDoc();
+        } else {
+            long embedStart = System.currentTimeMillis();
+            List<float[]> vectors = aiClient.embedBatch(chunks);
+            long embedEnd = System.currentTimeMillis();
+            metrics.addEmbedCall(embedEnd - embedStart, vectors.isEmpty());
 
-        // 流式写 ES：每 200 条发一批，避免单文档 chunk 过多时内存堆积
-        final int ES_BATCH_SIZE = 200;
-        long esStart = System.currentTimeMillis();
-        List<ElasticsearchService.DocIndex> esBatch = new ArrayList<>();
-        for (int i = 0; i < chunks.size(); i++) {
-            float[] vector = i < vectors.size() ? vectors.get(i) : new float[0];
+            // 流式写 ES：每 200 条发一批，避免单文档 chunk 过多时内存堆积
+            final int ES_BATCH_SIZE = 200;
+            long esStart = System.currentTimeMillis();
+            List<ElasticsearchService.DocIndex> esBatch = new ArrayList<>();
+            for (int i = 0; i < chunks.size(); i++) {
+                float[] vector = i < vectors.size() ? vectors.get(i) : new float[0];
 
-            esBatch.add(ElasticsearchService.DocIndex.builder()
-                    .docId(doc.getFileId())
-                    .fileName(doc.getFileName())
-                    .deptName(deptName)
-                    .isPublic(isPublic)
-                    .itemTitle(itemTitle)
-                    .itemCategory(itemCategory)
-                    .content(chunks.get(i))
-                    .contentVector(vector)
-                    .minioPath(doc.getMinioPath())
-                    .chunkIndex(i)
-                    .build());
+                esBatch.add(ElasticsearchService.DocIndex.builder()
+                        .docId(doc.getFileId())
+                        .fileName(doc.getFileName())
+                        .deptName(deptName)
+                        .isPublic(isPublic)
+                        .itemTitle(itemTitle)
+                        .itemCategory(itemCategory)
+                        .content(chunks.get(i))
+                        .contentVector(vector)
+                        .minioPath(doc.getMinioPath())
+                        .chunkIndex(i)
+                        .build());
 
-            if (esBatch.size() >= ES_BATCH_SIZE) {
-                esService.bulkIndex(esBatch);
-                esBatch.clear();
+                if (esBatch.size() >= ES_BATCH_SIZE) {
+                    esService.bulkIndex(esBatch);
+                    esBatch.clear();
+                }
             }
+            if (!esBatch.isEmpty()) {
+                esService.bulkIndex(esBatch);
+            }
+            long esEnd = System.currentTimeMillis();
+            metrics.addEsIndexTime(esEnd - esStart);
         }
-        if (!esBatch.isEmpty()) {
-            esService.bulkIndex(esBatch);
-        }
-        long esEnd = System.currentTimeMillis();
-        metrics.addEsIndexTime(esEnd - esStart);
         long docEnd = System.currentTimeMillis();
         log.info("【性能埋点】文档处理完成: {}, 耗时={}ms, 分块={}, 文本大小={}KB",
                 fileName, docEnd - docStart, chunks.size(), String.format("%.1f", plainText.length() / 1024.0));
@@ -911,11 +915,13 @@ public class ImportService {
         private long totalEsIndexTimeMs;
         private long totalParseTimeMs;
         private long totalMinioTimeMs;
+        private int emptyDocCount;
 
         public void addParseTime(long ms) { this.totalParseTimeMs += ms; }
         public void addTextSize(long bytes) { this.totalTextSizeBytes += bytes; }
         public void addMinioTime(long ms) { this.totalMinioTimeMs += ms; }
         public void addChunks(int count) { this.totalChunks += count; }
+        public void addEmptyDoc() { this.emptyDocCount++; }
         public void addEmbedCall(long timeMs, boolean failed) {
             this.embedCallCount++;
             this.totalEmbedTimeMs += timeMs;
@@ -959,6 +965,7 @@ public class ImportService {
             log.info("【Embedding】");
             log.info("调用总次数: {}", embedCallCount);
             log.info("失败次数: {}", embedFailCount);
+            log.info("空文档（无有效内容可嵌入）: {}", emptyDocCount);
             log.info("平均 RT: {} ms", String.format("%.1f", avgEmbedRt));
             log.info("QPS: {}", String.format("%.2f", embedQps));
             log.info("");
