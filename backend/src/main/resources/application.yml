@@ -55,7 +55,7 @@ spring:
 # ==================== JWT ====================
 jwt:
   secret: ${JWT_SECRET:default-jwt-secret-change-in-production}
-  expiration: 86400000  # 24 小时 (毫秒)
+  expiration: 604800000  # 7 天 (毫秒)
 
 # ==================== Elasticsearch ====================
 elasticsearch:
