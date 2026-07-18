@@ -77,7 +77,15 @@ public class AIClient {
             return resp != null ? resp.embeddings : List.of();
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - start;
-            log.error("【性能埋点】EmbedBatch 调用失败, 条数={}, 耗时={}ms", texts.size(), elapsed, e);
+            String httpStatus = "N/A";
+            String responseBody = "N/A";
+            if (e instanceof org.springframework.web.client.HttpStatusCodeException) {
+                var hse = (org.springframework.web.client.HttpStatusCodeException) e;
+                httpStatus = String.valueOf(hse.getStatusCode().value());
+                responseBody = hse.getResponseBodyAsString();
+            }
+            log.error("【性能埋点】EmbedBatch 调用失败, 条数={}, 耗时={}ms, HTTP状态={}, 响应体={}",
+                    texts.size(), elapsed, httpStatus, responseBody, e);
             return List.of();
         }
     }
