@@ -416,6 +416,15 @@ tail -50 /home/ubantu/llm/docker/anythingllm/knowledge/backend/app.log
 tail -20 /home/ubantu/llm/docker/anythingllm/knowledge/ai-service/ai-service.log
 ```
 
+### 查看导入性能指标
+
+```bash
+cd /home/ubantu/llm/docker/anythingllm/knowledge/backend
+grep -A 30 "基线性能指标汇总" app.log | tail -40
+```
+
+导入完成后会输出解析耗时、Embedding RT、ES 写入速度等基线指标供调优参考。
+
 ### 拉取更新
 
 ```bash
