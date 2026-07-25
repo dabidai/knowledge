@@ -535,9 +535,7 @@ public class ImportService {
             doc.setOcrPages(pdfMeta.ocrPages());
             doc.setQualityGrade(pdfMeta.qualityGrade());
         }
-        docRepo.save(doc);
-
-        // 预取懒加载的 Item 字段 —— save 事务已提交，需新事务访问
+        // 预取懒加载的 Item 字段
         String itemTitle = null;
         String itemCategory = null;
         try {
@@ -563,44 +561,53 @@ public class ImportService {
         }
         metrics.addChunks(chunks.size());
 
+        boolean embedSuccess = true;
         if (chunks.isEmpty()) {
             metrics.addEmptyDoc();
         } else {
             long embedStart = System.currentTimeMillis();
             List<float[]> vectors = aiClient.embedBatch(chunks);
             long embedEnd = System.currentTimeMillis();
-            metrics.addEmbedCall(embedEnd - embedStart, vectors.isEmpty());
+            embedSuccess = !vectors.isEmpty();
+            metrics.addEmbedCall(embedEnd - embedStart, !embedSuccess);
 
-            // 流式写 ES：每 200 条发一批，避免单文档 chunk 过多时内存堆积
-            final int ES_BATCH_SIZE = 200;
-            long esStart = System.currentTimeMillis();
-            List<ElasticsearchService.DocIndex> esBatch = new ArrayList<>();
-            for (int i = 0; i < chunks.size(); i++) {
-                float[] vector = i < vectors.size() ? vectors.get(i) : new float[0];
+            if (embedSuccess) {
+                // 流式写 ES：每 200 条发一批，避免单文档 chunk 过多时内存堆积
+                final int ES_BATCH_SIZE = 200;
+                long esStart = System.currentTimeMillis();
+                List<ElasticsearchService.DocIndex> esBatch = new ArrayList<>();
+                for (int i = 0; i < chunks.size(); i++) {
+                    float[] vector = vectors.get(i);
 
-                esBatch.add(ElasticsearchService.DocIndex.builder()
-                        .docId(doc.getFileId())
-                        .fileName(doc.getFileName())
-                        .deptName(deptName)
-                        .isPublic(isPublic)
-                        .itemTitle(itemTitle)
-                        .itemCategory(itemCategory)
-                        .content(chunks.get(i))
-                        .contentVector(vector)
-                        .minioPath(doc.getMinioPath())
-                        .chunkIndex(i)
-                        .build());
+                    esBatch.add(ElasticsearchService.DocIndex.builder()
+                            .docId(doc.getFileId())
+                            .fileName(doc.getFileName())
+                            .deptName(deptName)
+                            .isPublic(isPublic)
+                            .itemTitle(itemTitle)
+                            .itemCategory(itemCategory)
+                            .content(chunks.get(i))
+                            .contentVector(vector)
+                            .minioPath(doc.getMinioPath())
+                            .chunkIndex(i)
+                            .build());
 
-                if (esBatch.size() >= ES_BATCH_SIZE) {
-                    esService.bulkIndex(esBatch);
-                    esBatch.clear();
+                    if (esBatch.size() >= ES_BATCH_SIZE) {
+                        esService.bulkIndex(esBatch);
+                        esBatch.clear();
+                    }
                 }
+                if (!esBatch.isEmpty()) {
+                    esService.bulkIndex(esBatch);
+                }
+                long esEnd = System.currentTimeMillis();
+                metrics.addEsIndexTime(esEnd - esStart);
             }
-            if (!esBatch.isEmpty()) {
-                esService.bulkIndex(esBatch);
-            }
-            long esEnd = System.currentTimeMillis();
-            metrics.addEsIndexTime(esEnd - esStart);
+        }
+
+        // 只在 Embedding 成功后保存（失败时不入库，续传时会重新处理）
+        if (embedSuccess) {
+            docRepo.save(doc);
         }
         long docEnd = System.currentTimeMillis();
         log.info("【性能埋点】文档处理完成: {}, 耗时={}ms, 分块={}, 文本大小={}KB",
@@ -629,6 +636,25 @@ public class ImportService {
             extract7z(fullStream, targetDir);
         } else if (isRar(header)) {
             extractRar(fullStream, targetDir);
+        } else if (isGzip(header)) {
+            // .tar.gz / .tgz：先解压 gzip，再检查是否为 tar
+            var gzStream = new org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream(fullStream);
+            byte[] tarHeader = new byte[512];
+            int tarRead = 0;
+            while (tarRead < tarHeader.length) {
+                int n = gzStream.read(tarHeader, tarRead, tarHeader.length - tarRead);
+                if (n < 0) break;
+                tarRead += n;
+            }
+            var decompressedFull = new java.io.SequenceInputStream(
+                    new java.io.ByteArrayInputStream(tarHeader, 0, tarRead), gzStream);
+            if (isTar(tarHeader)) {
+                extractTar(decompressedFull, targetDir);
+            } else {
+                // .gz 但不是 tar（单文件压缩），视为单个文件处理
+                log.warn(".gz 文件不是 tar 归档，尝试按文档读取");
+                throw new IllegalArgumentException("不支持的压缩格式: .gz 不是 tar 归档，请解压后导入目录");
+            }
         } else if (isTar(header)) {
             extractTar(fullStream, targetDir);
         } else {
@@ -654,6 +680,11 @@ public class ImportService {
                 && header[261] == 'r';
         }
         return false;
+    }
+
+    /** gzip 格式检测（.tar.gz / .tgz） */
+    private static boolean isGzip(byte[] header) {
+        return header.length >= 2 && (header[0] & 0xFF) == 0x1F && (header[1] & 0xFF) == 0x8B;
     }
 
     private void extractZip(InputStream inputStream, Path targetDir) throws Exception {
@@ -890,6 +921,28 @@ public class ImportService {
                 taskRepo.save(t);
             }
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * 启动时检测上次 JVM 崩溃遗留的孤儿任务（状态为 parsing/metadata_parsed），
+     * 自动标记为 failed，避免前台一直显示"导入中"。
+     */
+    public void markOrphanedTasksAsFailed() {
+        try {
+            List<ImportTask> orphans = taskRepo.findByStatus("parsing");
+            orphans.addAll(taskRepo.findByStatus("metadata_parsed"));
+            for (ImportTask t : orphans) {
+                t.setStatus("failed");
+                t.setErrors("进程异常终止（JVM 崩溃或关机），导入中断");
+                taskRepo.save(t);
+                log.warn("孤儿任务已标记为失败: batchId={}, archiveName={}", t.getBatchId(), t.getArchiveName());
+            }
+            if (!orphans.isEmpty()) {
+                log.info("共 {} 个孤儿任务已标记为失败，可通过 POST /tasks/{{batchId}}/retry 续传", orphans.size());
+            }
+        } catch (Exception e) {
+            log.error("标记孤儿任务失败", e);
+        }
     }
 
     /** 异步导入执行体 —— 接收 batchId 在后台运行 */
