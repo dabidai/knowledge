@@ -32,5 +32,8 @@ ai-service/ai-models/
 *.tar
 *.ps1
 *.tar.gz
+*.md
 
 onnx-model/
+*.jpg
+tmp/
