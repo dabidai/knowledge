@@ -27,6 +27,7 @@ import static org.mockito.Mockito.*;
  * 使用 @DataJpaTest 仅加载 JPA，GraphBuildService 用 Mockito mock。
  */
 @DataJpaTest
+@org.springframework.test.context.ContextConfiguration(classes = JpaTestConfiguration.class)
 @ActiveProfiles("test")
 @Import({CsvImportService.class, BCryptPasswordEncoder.class,
          CsvImportServiceTest.MockGraphConfig.class})
