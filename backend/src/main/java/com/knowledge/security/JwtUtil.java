@@ -18,48 +18,34 @@ public class JwtUtil {
 
     public JwtUtil(@Value("${jwt.secret}") String secret,
                    @Value("${jwt.expiration}") long expiration) {
+        if (secret == null || secret.isBlank() || secret.getBytes(StandardCharsets.UTF_8).length < 32)
+            throw new IllegalArgumentException("请配置至少 32 字节的随机 JWT_SECRET");
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        if (expiration <= 0) throw new IllegalArgumentException("jwt.expiration 必须大于 0");
         this.expiration = expiration;
     }
 
     /** 生成 JWT Token */
-    public String generateToken(String username, String role, String deptName) {
+    public String generateToken(Long userId) {
+        if (userId == null || userId <= 0) throw new IllegalArgumentException("用户 ID 无效");
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
-                .subject(username)
-                .claim("role", role)
-                .claim("dept", deptName)
+                .subject(userId.toString())
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(key)
                 .compact();
     }
 
-    /** 从 Token 中提取用户名 */
-    public String getUsername(String token) {
-        return parseClaims(token).getSubject();
-    }
-
-    /** 从 Token 中提取角色 */
-    public String getRole(String token) {
-        return parseClaims(token).get("role", String.class);
-    }
-
-    /** 从 Token 中提取部门 */
-    public String getDept(String token) {
-        return parseClaims(token).get("dept", String.class);
-    }
-
-    /** 验证 Token 是否有效 */
-    public boolean validate(String token) {
-        try {
-            parseClaims(token);
-            return true;
-        } catch (JwtException | IllegalArgumentException e) {
-            return false;
-        }
+    /** 同一次解析中校验签名、有效期与身份；不接受用户名格式。 */
+    public Long parseUserId(String token) {
+        Claims claims = parseClaims(token);
+        String subject = claims.getSubject();
+        if (claims.getExpiration() == null || subject == null || !subject.matches("[1-9][0-9]*"))
+            throw new IllegalArgumentException("Token 身份或有效期无效");
+        return Long.valueOf(subject);
     }
 
     private Claims parseClaims(String token) {
