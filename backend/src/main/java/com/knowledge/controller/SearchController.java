@@ -44,8 +44,12 @@ public class SearchController {
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
 
-        String query = (String) body.getOrDefault("query", "");
-        int topK = (int) body.getOrDefault("topK", 5);
+        if (!(body.get("query") instanceof String query)) {
+            return ApiResponse.error(400, "查询必须为文本");
+        }
+        if (!(body.getOrDefault("topK", 5) instanceof Integer topK)) {
+            return ApiResponse.error(400, "topK 必须为整数");
+        }
         String category = (String) body.getOrDefault("category", "");
         String year = (String) body.getOrDefault("year", "");
         String itemType = (String) body.getOrDefault("itemType", "");
@@ -53,10 +57,21 @@ public class SearchController {
         if (query == null || query.isBlank()) {
             return ApiResponse.error(400, "查询内容不能为空");
         }
+        if (query.length() > 1000 || topK < 1 || topK > 10) {
+            return ApiResponse.error(400, "查询最多 1000 字，topK 必须在 1 到 10 之间");
+        }
 
         try {
             // 1. 生成查询向量
-            float[] queryVector = aiClient.embed(query);
+            float[] queryVector = null;
+            boolean degraded = false;
+            try {
+                queryVector = aiClient.embed(query);
+                degraded = queryVector == null || queryVector.length == 0;
+            } catch (AIClient.AIServiceException e) {
+                degraded = true;
+                log.warn("查询向量生成失败，降级为关键词检索");
+            }
 
             // 2. ES 混合检索（带元数据筛选）
             AccessScope scope = AccessScope.of(user);
@@ -104,11 +119,15 @@ public class SearchController {
                     .answer(answer)
                     .sources(sources)
                     .relatedItems(Collections.emptyList()) // Neo4j 后续接入
+                    .degraded(degraded)
+                    .warning(degraded ? "语义检索暂不可用，本次已使用关键词检索" : null)
                     .build();
 
             return ApiResponse.ok(result);
         } catch (AccessDeniedException e) {
             throw e;
+        } catch (AIClient.AIServiceException e) {
+            return ApiResponse.error(e.getStatus(), e.getMessage());
         } catch (Exception e) {
             log.error("检索失败", e);
             return ApiResponse.error(500, "检索服务异常: " + e.getMessage());

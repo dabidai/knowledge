@@ -545,7 +545,13 @@ public class ImportService {
             metrics.addEmptyDoc();
         } else {
             long embedStart = System.currentTimeMillis();
-            List<float[]> vectors = aiClient.embedBatch(chunks);
+            List<float[]> vectors;
+            try {
+                vectors = aiClient.embedBatch(chunks);
+            } catch (AIClient.AIServiceException e) {
+                metrics.addEmbedCall(System.currentTimeMillis() - embedStart, true);
+                throw e; // 交给现有逐文档错误记录流程，不将向量失败当作处理完成
+            }
             long embedEnd = System.currentTimeMillis();
             embedSuccess = !vectors.isEmpty();
             metrics.addEmbedCall(embedEnd - embedStart, !embedSuccess);
