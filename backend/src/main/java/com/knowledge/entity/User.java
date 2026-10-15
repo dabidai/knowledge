@@ -24,6 +24,8 @@ public class User {
 
     /** BCrypt 加密后的密码 */
     @Column(nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @ToString.Exclude
     private String password;
 
     /** 角色: admin / default */
