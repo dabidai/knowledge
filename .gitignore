@@ -15,6 +15,9 @@ data/*.db
 *.mov
 maven-status/
 
+# 代理工作目录，仅本地保留
+.planning/
+
 # Docker 运行时数据
 docker/data/
 docker/ollama/
