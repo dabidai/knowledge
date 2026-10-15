@@ -20,7 +20,7 @@ import java.util.*;
  *
  * <p>两种查询模式：
  * <ul>
- *   <li>全局概览 —— 部门 → 事项（不传 itemId，带缓存）</li>
+ *   <li>全局概览 —— 部门 → 事项（不传 itemId，实时鉴权）</li>
  *   <li>事项脉络 —— 事项 → 文档 → 签阅 → 用户（传 itemId，不缓存）</li>
  * </ul>
  */
@@ -32,10 +32,12 @@ public class GraphController {
 
     /** Neo4j 驱动 */
     private final Driver neo4jDriver;
+    private final com.knowledge.service.PermissionService permissionService;
+    private final com.knowledge.repository.DocumentRepository documentRepository;
 
     /**
      * 查询知识图谱数据。
-     * 不带 itemId 时返回全局概览（缓存 15 分钟），
+     * 不带 itemId 时返回权限范围内的概览，
      * 带 itemId 时返回该事项的完整脉络（实时查询）。
      *
      * @param itemId 可选，事项ID。传入则查询特定事项脉络
@@ -43,22 +45,15 @@ public class GraphController {
      * @return 图谱数据（节点列表 + 边列表）
      */
     @GetMapping
-    @org.springframework.cache.annotation.Cacheable(
-            value = "graphOverview", key = "#user.department.name",
-            condition = "#itemId == null || #itemId.isEmpty()",
-            unless = "#result.code != 200")
     public ApiResponse<GraphData> query(
             @RequestParam(required = false) String itemId,
             @AuthenticationPrincipal User user) {
 
-        // 防御：无部门信息的用户无法查询图谱
-        if (user.getDepartment() == null) {
-            return ApiResponse.error(400, "当前用户未关联部门，无法查询知识图谱");
-        }
+        if (itemId != null && !itemId.isBlank()) permissionService.requireItem(user, itemId);
 
         try (Session session = neo4jDriver.session()) {
             if (itemId != null && !itemId.isBlank()) {
-                return ApiResponse.ok(queryItemGraph(session, itemId));
+                return ApiResponse.ok(queryItemGraph(session, itemId, user));
             } else {
                 return ApiResponse.ok(queryOverview(session, user));
             }
@@ -77,31 +72,20 @@ public class GraphController {
      * @return 部门→事项 的图数据，最多 100 条
      */
     private GraphData queryOverview(Session session, User user) {
-        String deptName = user.getDepartment().getName();
-        String cypher;
-        Map<String, Object> params = new HashMap<>();
-
-        if ("admin".equals(user.getRole())) {
-            cypher = """
+        List<String> itemIds = permissionService.accessibleItems(user).stream()
+                .map(com.knowledge.entity.Item::getItemId).toList();
+        List<String> docIds = permissionService.accessibleDocumentIds(user);
+        String cypher = """
                 MATCH (d:Department)-[:OWNS]->(i:Item)
+                WHERE i.item_id IN $itemIds
                 OPTIONAL MATCH (i)-[:CONTAINS]->(doc:Document)
+                WHERE doc.file_id IN $docIds
                 RETURN d.name AS dept, i.item_id AS itemId, i.title AS title,
                        i.category AS category, COUNT(doc) AS docCount
                 ORDER BY d.name, i.title
                 LIMIT 100
                 """;
-        } else {
-            cypher = """
-                MATCH (d:Department)-[:OWNS]->(i:Item)
-                WHERE d.name = $deptName OR i.is_public = true
-                OPTIONAL MATCH (i)-[:CONTAINS]->(doc:Document)
-                RETURN d.name AS dept, i.item_id AS itemId, i.title AS title,
-                       i.category AS category, COUNT(doc) AS docCount
-                ORDER BY d.name, i.title
-                LIMIT 100
-                """;
-            params.put("deptName", deptName);
-        }
+        Map<String, Object> params = Map.of("itemIds", itemIds, "docIds", docIds);
 
         Result result = session.run(cypher, params);
         List<GraphNode> nodes = new ArrayList<>();
@@ -144,10 +128,15 @@ public class GraphController {
      * @param itemId  事项ID
      * @return 事项为中心的子图数据
      */
-    private GraphData queryItemGraph(Session session, String itemId) {
+    private GraphData queryItemGraph(Session session, String itemId, User user) {
+        List<String> docIds = permissionService.readableDocuments(user,
+                documentRepository.findByItemItemId(itemId).stream()
+                        .map(com.knowledge.entity.Document::getFileId).toList()).stream()
+                .map(com.knowledge.entity.Document::getFileId).toList();
         String cypher = """
             MATCH (i:Item {item_id: $itemId})
             OPTIONAL MATCH (i)-[:CONTAINS]->(doc:Document)
+            WHERE doc.file_id IN $docIds
             OPTIONAL MATCH (i)-[:HAS_OPINION]->(o:Opinion)
             OPTIONAL MATCH (u:User)-[:SIGNED]->(o)
             RETURN i, COLLECT(DISTINCT doc) AS docs,
@@ -155,7 +144,7 @@ public class GraphController {
                    COLLECT(DISTINCT u) AS users
             """;
 
-        Result result = session.run(cypher, Map.of("itemId", itemId));
+        Result result = session.run(cypher, Map.of("itemId", itemId, "docIds", docIds));
         List<GraphNode> nodes = new ArrayList<>();
         List<GraphEdge> edges = new ArrayList<>();
 
