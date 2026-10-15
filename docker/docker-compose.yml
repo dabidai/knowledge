@@ -112,15 +112,16 @@ services:
     build:
       context: ../ai-service
       dockerfile: Dockerfile
+      args:
+        EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-pytorch}
     container_name: kb-ai
     environment:
       # Linux 下 host.docker.internal 通过 extra_hosts 挂载为 host-gateway
       OLLAMA_HOST: http://host.docker.internal:11434
-      OLLAMA_MODEL: qwen3:32b
-      EMBEDDING_MODEL: BAAI/bge-large-zh-v1.5
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:32b}
+      EMBEDDING_MODEL: /opt/models/bge-large-zh-v1.5
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-pytorch}
       HF_HOME: /app/.cache/huggingface
-    volumes:
-      - ./data/ai-models:/app/.cache/huggingface
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

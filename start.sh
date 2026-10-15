@@ -45,6 +45,11 @@ start_ai() {
   fi
   source venv/bin/activate
 
+  # 保留已有本地模型；新环境才使用与容器一致的 BGE 模型标识。
+  if [ -z "${EMBEDDING_MODEL:-}" ] && [ -d ./models/bge-large-zh-v1.5-local ]; then
+    export EMBEDDING_MODEL=./models/bge-large-zh-v1.5-local
+  fi
+
   # 停旧进程
   local old_pid
   old_pid=$(ss -tlnp | grep 8000 | grep -oP 'pid=\K\d+') || true
@@ -55,11 +60,16 @@ start_ai() {
   fi
 
   # 启动
-  EMBEDDING_MODEL=./models/bge-large-zh-v1.5-local \
-  OLLAMA_MODEL=qwen3:32b \
-  nohup uvicorn main:app --host 0.0.0.0 --port 8000 > ai-service.log 2>&1 &
+  # 与容器使用相同的模型/后端选择；本地路径可以通过环境变量覆盖。
+  EMBEDDING_MODEL="${EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}" \
+  EMBEDDING_BACKEND="${EMBEDDING_BACKEND:-pytorch}" \
+  OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:32b}" \
+  nohup uvicorn main:app --host 127.0.0.1 --port 8000 > ai-service.log 2>&1 &
 
-  wait_for_port 8000 "AI 服务" 15
+  wait_for_port 8000 "AI 服务" 120
+  if ! curl --fail --silent --max-time 5 http://127.0.0.1:8000/health/ready > /dev/null; then
+    warn "AI 进程已启动，但模型依赖尚未就绪，请检查 /health/ready 与日志"
+  fi
 }
 
 # ──── 2. 后端（Spring Boot，端口 8080） ────
