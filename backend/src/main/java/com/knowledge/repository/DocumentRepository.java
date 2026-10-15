@@ -15,4 +15,12 @@ public interface DocumentRepository extends JpaRepository<Document, String> {
     List<Document> findByImportBatch(String batchId);
 
     List<Document> findByStatus(String status);
+
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = "item")
+    List<Document> findByDeptNameAndIsPublic(String deptName, Boolean isPublic);
+
+    @org.springframework.data.jpa.repository.Query("SELECT d.fileId FROM Document d LEFT JOIN d.item i " +
+            "WHERE :admin = true OR ((d.isPublic = true OR d.deptName = :deptName) " +
+            "AND (i IS NULL OR i.isPublic = true OR i.deptName = :deptName))")
+    List<String> findAccessibleIds(boolean admin, String deptName);
 }
