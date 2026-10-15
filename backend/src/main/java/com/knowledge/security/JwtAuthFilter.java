@@ -32,11 +32,19 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         String token = extractToken(request);
 
-        if (token != null && jwtUtil.validate(token)) {
-            String username = jwtUtil.getUsername(token);
-            Optional<User> userOpt = userRepository.findByUsername(username);
+        Long userId = null;
+        if (token != null) {
+            try {
+                userId = jwtUtil.parseUserId(token);
+            } catch (io.jsonwebtoken.JwtException | IllegalArgumentException ignored) {
+                // 不建立身份；受保护接口由 SecurityFilterChain 统一返回 401。
+            }
+        }
+        if (userId != null) {
+            Optional<User> userOpt = userRepository.findById(userId);
 
-            if (userOpt.isPresent() && userOpt.get().getEnabled()) {
+            if (userOpt.isPresent() && Boolean.TRUE.equals(userOpt.get().getEnabled())
+                    && ("admin".equals(userOpt.get().getRole()) || "default".equals(userOpt.get().getRole()))) {
                 User user = userOpt.get();
                 List<SimpleGrantedAuthority> authorities = List.of(
                         new SimpleGrantedAuthority("ROLE_" + user.getRole().toUpperCase())
