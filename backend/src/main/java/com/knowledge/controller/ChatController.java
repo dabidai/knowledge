@@ -5,12 +5,14 @@ import com.knowledge.dto.SearchResult;
 import com.knowledge.entity.Item;
 import com.knowledge.entity.Opinion;
 import com.knowledge.entity.User;
+import com.knowledge.security.AccessScope;
+import com.knowledge.service.PermissionService;
+import org.springframework.security.access.AccessDeniedException;
 import com.knowledge.repository.ItemRepository;
 import com.knowledge.repository.OpinionRepository;
 import com.knowledge.service.AIClient;
 import com.knowledge.service.ElasticsearchService;
 import com.knowledge.service.ElasticsearchService.DocIndex;
-import com.knowledge.service.MinioService;
 import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -39,7 +41,7 @@ public class ChatController {
 
     private final ElasticsearchService esService;
     private final AIClient aiClient;
-    private final MinioService minioService;
+    private final PermissionService permissionService;
     private final com.knowledge.service.ConversationService conversationService;
     private final ItemRepository itemRepo;
     private final OpinionRepository opinionRepo;
@@ -81,23 +83,30 @@ public class ChatController {
                         user.getId(), question).getId();
             }
 
+            // 复用会话必须先校验所有者；历史只从服务端加载。
+            List<Map<String, String>> history = conversationService.getMessages(conversationId, user.getId())
+                    .stream().map(m -> Map.of("role", m.getRole(), "content", m.getContent())).toList();
+            if (history.size() > 20) history = history.subList(history.size() - 20, history.size());
+
             // 2. 保存用户消息
-            conversationService.addMessage(conversationId, "user", question, null);
+            conversationService.addMessage(conversationId, user.getId(), "user", question, null);
 
             // 3. 生成查询向量
             float[] queryVector = aiClient.embed(question);
 
             // 4. ES 混合检索
-            String deptName = user.getDepartment().getName();
+            AccessScope scope = AccessScope.of(user);
             List<DocIndex> docs = esService.hybridSearch(question, queryVector,
-                    deptName, topK, "", "", "");
+                    scope, topK, "", "", "");
+
+            docs = permissionService.filterSearchResults(user, docs);
 
             // 5. 从结构化数据库搜索事项和签阅记录
             List<String> contexts = new ArrayList<>();
             StringBuilder structCtx = new StringBuilder();
 
             List<Item> matchedItems = itemRepo.searchByTitleKeyword(
-                    question, PageRequest.of(0, 10));
+                    question, scope.admin(), scope.department(), PageRequest.of(0, 10));
             if (!matchedItems.isEmpty()) {
                 structCtx.append("\n【相关事项及签阅记录】\n");
                 for (Item item : matchedItems) {
@@ -133,7 +142,8 @@ public class ChatController {
             for (DocIndex doc : docs) {
                 contexts.add(doc.getContent());
                 if (seenFileIds.add(doc.getDocId())) {
-                    String downloadUrl = minioService.getPresignedUrl(doc.getMinioPath());
+                    String downloadUrl = "/api/browse/download/" + java.net.URLEncoder.encode(
+                            doc.getDocId(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
                     sources.add(SearchResult.SourceDoc.builder()
                             .fileId(doc.getDocId())
                             .fileName(doc.getFileName())
@@ -144,11 +154,6 @@ public class ChatController {
                 }
             }
 
-            // 7. 提取对话历史
-            @SuppressWarnings("unchecked")
-            List<Map<String, String>> history = (List<Map<String, String>>)
-                    body.getOrDefault("history", Collections.emptyList());
-
             // 8. 智能体对话（带历史 + RAG 上下文 + 结构化事项数据）
             String answer = aiClient.chat(question, contexts, history);
 
@@ -158,7 +163,7 @@ public class ChatController {
             }
 
             // 10. 保存 AI 回答
-            conversationService.addMessage(conversationId, "assistant", answer, sources);
+            conversationService.addMessage(conversationId, user.getId(), "assistant", answer, sources);
 
             ChatResult result = ChatResult.builder()
                     .answer(answer)
@@ -167,6 +172,8 @@ public class ChatController {
                     .build();
 
             return ApiResponse.ok(result);
+        } catch (AccessDeniedException e) {
+            throw e;
         } catch (Exception e) {
             log.error("对话失败", e);
             return ApiResponse.error(500, "对话服务异常: " + e.getMessage());

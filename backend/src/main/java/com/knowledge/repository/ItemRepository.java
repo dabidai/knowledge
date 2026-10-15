@@ -14,6 +14,7 @@ public interface ItemRepository extends JpaRepository<Item, String> {
     List<Item> findByCategoryNo(String categoryNo);
 
     /** 按标题关键词搜索事项（限制条数） */
-    @Query("SELECT i FROM Item i WHERE i.title LIKE %:keyword% ORDER BY i.importTime DESC")
-    List<Item> searchByTitleKeyword(String keyword, Pageable pageable);
+    @Query("SELECT i FROM Item i WHERE i.title LIKE %:keyword% " +
+            "AND (:admin = true OR i.isPublic = true OR i.deptName = :deptName) ORDER BY i.importTime DESC")
+    List<Item> searchByTitleKeyword(String keyword, boolean admin, String deptName, Pageable pageable);
 }

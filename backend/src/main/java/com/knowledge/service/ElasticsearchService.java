@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import com.knowledge.security.AccessScope;
 import java.util.*;
 
 /** Elasticsearch 搜索服务 —— 索引管理 + BM25/KNN 混合检索 */
@@ -81,14 +82,14 @@ public class ElasticsearchService {
      *
      * @param queryText   查询文本
      * @param queryVector 查询向量（可为 null，仅做 BM25）
-     * @param deptName    用户所在部门（用于权限过滤）
+     * @param scope       服务端认证用户的权限范围
      * @param topK        返回结果数
      * @param category    事项分类筛选（"" 表示不过滤）
      * @param year        年度筛选（"" 表示不过滤）
      * @param itemType    事项类型筛选（"" 表示不过滤）
      */
     public List<DocIndex> hybridSearch(String queryText, float[] queryVector,
-                                        String deptName, int topK,
+                                        AccessScope scope, int topK,
                                         String category, String year, String itemType) throws IOException {
 
         // 检查索引是否存在
@@ -105,16 +106,14 @@ public class ElasticsearchService {
             return Collections.emptyList();
         }
 
+        Query accessFilter = accessFilter(scope);
+
         // BM25 子查询
         Query bm25Query = Query.of(q -> q
                 .bool(BoolQuery.of(b -> {
                     b.must(m -> m.match(ma -> ma.field("content").query(queryText)));
                     // 权限过滤：本部门 OR 公共区
-                    b.filter(f -> f.bool(bf -> {
-                        bf.should(s -> s.term(t -> t.field("deptName").value(deptName)))
-                          .should(s -> s.term(t -> t.field("isPublic").value(true)));
-                        return bf;
-                    }));
+                    b.filter(accessFilter);
                     // 元数据筛选
                     if (category != null && !category.isEmpty()) {
                         b.filter(f -> f.term(t -> t.field("itemCategory").value(category)));
@@ -127,7 +126,7 @@ public class ElasticsearchService {
         );
 
         if (queryVector != null && queryVector.length > 0) {
-            // 有向量：BM25 + KNN 混合，用 RRF 融合
+            // 有向量：BM25 + KNN 混合，两路使用相同过滤条件
             SearchResponse<DocIndex> response = esClient.search(SearchRequest.of(s -> s
                     .index(indexName)
                     .query(bm25Query)
@@ -136,6 +135,7 @@ public class ElasticsearchService {
                             .queryVector(Arrays.asList(toFloatList(queryVector)))
                             .k(topK * 2)
                             .numCandidates(topK * 5)
+                            .filter(bm25Query.bool().filter())
                     ))
                     .size(topK)
                     .highlight(h -> h
@@ -167,6 +167,17 @@ public class ElasticsearchService {
 
             return extractResults(response);
         }
+    }
+
+    static Query accessFilter(AccessScope scope) {
+        if (scope.admin()) return Query.of(q -> q.matchAll(m -> m));
+        return Query.of(q -> q.bool(b -> {
+            b.should(s -> s.term(t -> t.field("isPublic").value(true)));
+            if (scope.department() != null) {
+                b.should(s -> s.term(t -> t.field("deptName").value(scope.department())));
+            }
+            return b.minimumShouldMatch("1");
+        }));
     }
 
     private List<DocIndex> extractResults(SearchResponse<DocIndex> response) {

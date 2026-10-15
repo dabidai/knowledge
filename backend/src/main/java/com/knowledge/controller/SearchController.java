@@ -3,14 +3,15 @@ package com.knowledge.controller;
 import com.knowledge.dto.ApiResponse;
 import com.knowledge.dto.SearchResult;
 import com.knowledge.entity.User;
+import com.knowledge.security.AccessScope;
+import com.knowledge.service.PermissionService;
+import org.springframework.security.access.AccessDeniedException;
 import com.knowledge.security.RateLimit;
 import com.knowledge.service.AIClient;
 import com.knowledge.service.ElasticsearchService;
 import com.knowledge.service.ElasticsearchService.DocIndex;
-import com.knowledge.service.MinioService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class SearchController {
 
     private final ElasticsearchService esService;
     private final AIClient aiClient;
-    private final MinioService minioService;
+    private final PermissionService permissionService;
 
     /** 判断 AI 回答是否表明"未找到相关内容" */
     private boolean isNoRelevantAnswer(String answer) {
@@ -39,9 +40,6 @@ public class SearchController {
     /** 综合检索 —— 返回 RAG 答案 + 来源文档 + 下载链接，支持分类/年度/部门筛选 */
     @PostMapping
     @RateLimit(maxRequests = 30, windowSeconds = 60)
-    @Cacheable(value = "search", key = "#body['query'] + '_' + #body['topK'] + '_' " +
-            "+ #body['category'] + '_' + #body['year'] + '_' + #user.department.name",
-            unless = "#result.code != 200")
     public ApiResponse<SearchResult> search(
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
@@ -61,9 +59,11 @@ public class SearchController {
             float[] queryVector = aiClient.embed(query);
 
             // 2. ES 混合检索（带元数据筛选）
-            String deptName = user.getDepartment().getName();
-            List<DocIndex> docs = esService.hybridSearch(query, queryVector, deptName, topK,
+            AccessScope scope = AccessScope.of(user);
+            List<DocIndex> docs = esService.hybridSearch(query, queryVector, scope, topK,
                     category, year, itemType);
+
+            docs = permissionService.filterSearchResults(user, docs);
 
             // 3. 整理来源文档
             Set<String> seenFileIds = new HashSet<>();
@@ -74,7 +74,8 @@ public class SearchController {
                 contexts.add(doc.getContent());
 
                 if (seenFileIds.add(doc.getDocId())) {
-                    String downloadUrl = minioService.getPresignedUrl(doc.getMinioPath());
+                    String downloadUrl = "/api/browse/download/" + java.net.URLEncoder.encode(
+                            doc.getDocId(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
                     sources.add(SearchResult.SourceDoc.builder()
                             .fileId(doc.getDocId())
                             .fileName(doc.getFileName())
@@ -106,6 +107,8 @@ public class SearchController {
                     .build();
 
             return ApiResponse.ok(result);
+        } catch (AccessDeniedException e) {
+            throw e;
         } catch (Exception e) {
             log.error("检索失败", e);
             return ApiResponse.error(500, "检索服务异常: " + e.getMessage());
