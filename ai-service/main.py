@@ -18,10 +18,9 @@ import settings as cfg
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# ============ 全局模型实例 ============
 embedder = None
 llm = None
+actual_backend = None
 
 RAG_SYSTEM = """你是一个政府公文知识库智能助手。根据提供的文档和结构化签阅资料回答。
 仅依据资料回答，不编造；资料不足时说明“根据已有资料无法确定”。
@@ -34,8 +33,6 @@ Question = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1,
                                           max_length=cfg.MAX_QUESTION_CHARS)]
 Context = Annotated[str, StringConstraints(max_length=cfg.MAX_CONTEXT_CHARS)]
 
-
-# ============ 请求/响应模型 ============
 
 class EmbedRequest(BaseModel):
     text: Text
@@ -175,8 +172,7 @@ def load_embedder():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时加载模型，关闭时释放资源"""
-    global embedder, llm
+    global embedder, llm, actual_backend
     app.state.embedding_gate = asyncio.Semaphore(cfg.EMBEDDING_CONCURRENCY)
     app.state.generation_gate = asyncio.Semaphore(cfg.GENERATION_CONCURRENCY)
     app.state.inflight = set()
@@ -184,24 +180,19 @@ async def lifespan(app: FastAPI):
         embedder = await run_in_threadpool(load_embedder)
         if embedder.get_sentence_embedding_dimension() != cfg.EMBEDDING_DIMENSIONS:
             raise ValueError("Embedding 模型维度与配置不一致")
-        logger.info("Embedding 已加载 model=%s backend=%s dimensions=%s",
-                    cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BACKEND, cfg.EMBEDDING_DIMENSIONS)
-
-        logger.info("连接 Ollama: %s, 模型: %s", cfg.OLLAMA_HOST, cfg.OLLAMA_MODEL)
-        llm = ChatOllama(
-            base_url=cfg.OLLAMA_HOST,
-            model=cfg.OLLAMA_MODEL,
-            temperature=0.1,
-            num_ctx=cfg.OLLAMA_NUM_CTX,
-            num_predict=cfg.OLLAMA_NUM_PREDICT,
-            client_kwargs={"timeout": cfg.GENERATION_TIMEOUT_SECONDS},
-        )
-        logger.info("Ollama 连接成功")
-
+        actual_backend = cfg.EMBEDDING_BACKEND
+        logger.info("Embedding 已加载 model=%s backend=%s dimensions=%s provider=%s",
+                    cfg.EMBEDDING_MODEL, actual_backend, cfg.EMBEDDING_DIMENSIONS,
+                    "CPUExecutionProvider" if actual_backend == "onnx" else "pytorch")
+        llm = ChatOllama(base_url=cfg.OLLAMA_HOST, model=cfg.OLLAMA_MODEL,
+                         temperature=0.1, num_ctx=cfg.OLLAMA_NUM_CTX,
+                         num_predict=cfg.OLLAMA_NUM_PREDICT,
+                         client_kwargs={"timeout": cfg.GENERATION_TIMEOUT_SECONDS})
+        logger.info("Ollama 客户端已配置 model=%s，依赖状态请查询 /health/ready", cfg.OLLAMA_MODEL)
         yield
     finally:
         await asyncio.gather(*app.state.inflight, return_exceptions=True)
-        embedder, llm = None, None
+        embedder, llm, actual_backend = None, None, None
 
 
 class BodyLimitMiddleware:
@@ -236,15 +227,39 @@ class BodyLimitMiddleware:
         await self.app(scope, limited_receive, send)
 
 
-app = FastAPI(title="知识库 AI 服务", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="知识库 AI 服务", version="0.2.0", lifespan=lifespan)
 app.add_middleware(BodyLimitMiddleware)
 
 
-# ============ API 端点 ============
-
 @app.get("/health")
+@app.get("/health/live")
 async def health():
     return {"status": "UP", "service": "ai-service"}
+
+
+@app.get("/health/ready")
+async def readiness():
+    embedding_ready = embedder is not None
+    ollama_ready = False
+    try:
+        async with httpx.AsyncClient(timeout=cfg.HEALTH_TIMEOUT_SECONDS) as client:
+            response = await client.get(cfg.OLLAMA_HOST + "/api/tags")
+            response.raise_for_status()
+            expected = cfg.OLLAMA_MODEL
+            if ":" not in expected.rsplit("/", 1)[-1]:
+                expected += ":latest"
+            ollama_ready = llm is not None and any(
+                model.get("name") == expected or model.get("model") == expected
+                for model in response.json().get("models", []))
+    except Exception:
+        logger.warning("Ollama 依赖检查失败")
+    ready = embedding_ready and ollama_ready
+    return JSONResponse(status_code=200 if ready else 503, content={
+        "status": "UP" if ready else "DEGRADED",
+        "embedding": "UP" if embedding_ready else "DOWN",
+        "ollama": "UP" if ollama_ready else "DOWN",
+        "backend": actual_backend,
+    })
 
 
 def encode_texts(texts):

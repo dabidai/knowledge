@@ -40,3 +40,4 @@ onnx-model/
 tmp/
 !docs/permission-isolation-design.md
 !ai-service/requirements-*.txt
+!ai-service/README.md
