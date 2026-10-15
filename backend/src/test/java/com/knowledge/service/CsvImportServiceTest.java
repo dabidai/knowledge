@@ -29,7 +29,7 @@ import static org.mockito.Mockito.*;
 @DataJpaTest
 @org.springframework.test.context.ContextConfiguration(classes = JpaTestConfiguration.class)
 @ActiveProfiles("test")
-@Import({CsvImportService.class, BCryptPasswordEncoder.class,
+@Import({CsvImportService.class, UserAccountService.class, BCryptPasswordEncoder.class,
          CsvImportServiceTest.MockGraphConfig.class})
 class CsvImportServiceTest {
 
@@ -102,7 +102,7 @@ class CsvImportServiceTest {
         Path file = tmpDir.resolve("user.csv");
         String csv = """
                 type,dept_name,username,password,role
-                user,测试部,testuser,test123,default
+                user,测试部,testuser,test12345,default
                 """;
         Files.writeString(file, csv, StandardCharsets.UTF_8);
 

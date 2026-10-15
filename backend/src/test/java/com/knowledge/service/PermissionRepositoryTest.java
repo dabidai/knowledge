@@ -54,7 +54,8 @@ class PermissionRepositoryTest {
 
     @Test void csvCannotReassignExistingItemOrFileToAnotherDepartment(@TempDir Path temp) throws Exception {
         var graph = mock(GraphBuildService.class);
-        var csv = new CsvImportService(departments, users, items, docs, opinions, mock(PasswordEncoder.class), graph);
+        var csv = new CsvImportService(departments, users, items, docs, opinions,
+                new UserAccountService(users, departments, mock(PasswordEncoder.class), graph), graph);
         items.save(Item.builder().itemId("i").title("B original").deptName("B").isPublic(false).build());
         docs.save(Document.builder().fileId("f").fileName("B.pdf").deptName("B").isPublic(false).build());
         Path itemCsv = temp.resolve("item.csv");
@@ -70,7 +71,8 @@ class PermissionRepositoryTest {
 
     @Test void csvCannotAttachDocumentOrOpinionToForeignItem(@TempDir Path temp) throws Exception {
         var graph = mock(GraphBuildService.class);
-        var csv = new CsvImportService(departments, users, items, docs, opinions, mock(PasswordEncoder.class), graph);
+        var csv = new CsvImportService(departments, users, items, docs, opinions,
+                new UserAccountService(users, departments, mock(PasswordEncoder.class), graph), graph);
         items.save(Item.builder().itemId("b").title("B").deptName("B").isPublic(false).build());
         Path file = temp.resolve("file.csv");
         Files.writeString(file, "id,name,title,item\nf,new.pdf,t,b\n");
