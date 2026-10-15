@@ -17,9 +17,7 @@ import java.time.Duration;
  *
  * <p>缓存域及过期策略：
  * <ul>
- *   <li>search —— 搜索结果，10 分钟（避免回答过时）</li>
- *   <li>browseTree —— 文档目录树，30 分钟（变动不频繁）</li>
- *   <li>graphOverview —— 图谱概览，15 分钟</li>
+ *   <li>search/browseTree/graphOverview 已停用内容缓存，避免缓存绕过当前资源权限</li>
  *   <li>importTasks —— 导入历史，2 分钟（需及时反映新任务）</li>
  * </ul>
  */
@@ -63,12 +61,6 @@ public class CacheConfig {
     public RedisCacheManagerBuilderCustomizer cacheCustomizer(
             RedisCacheConfiguration defaultConfig) {
         return builder -> builder
-                .withCacheConfiguration("search",
-                        defaultConfig.entryTtl(Duration.ofMinutes(10)))
-                .withCacheConfiguration("browseTree",
-                        defaultConfig.entryTtl(Duration.ofMinutes(30)))
-                .withCacheConfiguration("graphOverview",
-                        defaultConfig.entryTtl(Duration.ofMinutes(15)))
                 .withCacheConfiguration("importTasks",
                         defaultConfig.entryTtl(Duration.ofMinutes(2)));
     }
