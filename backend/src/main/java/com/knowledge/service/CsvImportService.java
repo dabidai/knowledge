@@ -156,7 +156,10 @@ public class CsvImportService {
             }
 
             String itemId = row[0].trim();
-            Item item = itemRepo.findById(itemId).orElse(Item.builder().itemId(itemId).build());
+            Item item = itemRepo.findById(itemId).orElse(null);
+            if (item != null) DocumentImportMatcher.requireSameScope(
+                    item.getDeptName(), item.getIsPublic(), deptName, isPublic);
+            else item = Item.builder().itemId(itemId).build();
 
             item.setTitle(row[1].trim());
             try { item.setCreatedAt(LocalDateTime.parse(row[2].trim(), fmt)); } catch (Exception ignored) {}
@@ -206,9 +209,13 @@ public class CsvImportService {
             String itemId = row[3].trim();
 
             Item item = itemRepo.findById(itemId).orElse(null);
+            if (item != null) DocumentImportMatcher.requireSameScope(
+                    item.getDeptName(), item.getIsPublic(), deptName, isPublic);
 
-            Document doc = docRepo.findById(fileId).orElse(
-                    Document.builder().fileId(fileId).build());
+            Document doc = docRepo.findById(fileId).orElse(null);
+            if (doc != null) DocumentImportMatcher.requireSameScope(
+                    doc.getDeptName(), doc.getIsPublic(), deptName, isPublic);
+            else doc = Document.builder().fileId(fileId).build();
 
             doc.setFileName(fileName);
             doc.setItem(item);
@@ -235,7 +242,7 @@ public class CsvImportService {
      * 格式: 事项ID, 事项标题, 签阅时间, 签阅人, 签阅意见
      */
     @Transactional
-    public List<Opinion> importOpinionsCsv(Path filePath, String batchId) throws Exception {
+    public List<Opinion> importOpinionsCsv(Path filePath, String deptName, boolean isPublic, String batchId) throws Exception {
         List<String[]> rows = readCsv(filePath);
         List<Opinion> opinions = new ArrayList<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy/M/d H:mm");
@@ -250,6 +257,8 @@ public class CsvImportService {
             }
 
             Item item = itemRepo.findById(row[0].trim()).orElse(null);
+            if (item != null) DocumentImportMatcher.requireSameScope(
+                    item.getDeptName(), item.getIsPublic(), deptName, isPublic);
 
             Opinion opinion = Opinion.builder()
                     .item(item)

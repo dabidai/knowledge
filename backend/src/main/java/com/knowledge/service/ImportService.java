@@ -182,7 +182,7 @@ public class ImportService {
             csvImportService.importFileIndexCsv(csvFiles.get("file_index"), targetDept, isPublic, batchId);
         }
         if (csvFiles.containsKey("opinions")) {
-            csvImportService.importOpinionsCsv(csvFiles.get("opinions"), batchId);
+            csvImportService.importOpinionsCsv(csvFiles.get("opinions"), targetDept, isPublic, batchId);
         }
 
         // 解析文档 —— CSV 已处理完，进度从 csvCount 起算
@@ -295,7 +295,7 @@ public class ImportService {
             csvImportService.importFileIndexCsv(csvFiles.get("file_index"), targetDept, isPublic, batchId);
         }
         if (csvFiles.containsKey("opinions")) {
-            csvImportService.importOpinionsCsv(csvFiles.get("opinions"), batchId);
+            csvImportService.importOpinionsCsv(csvFiles.get("opinions"), targetDept, isPublic, batchId);
         }
 
         // 5. 解析实际文档 —— CSV 已处理完，进度从 csvCount 起算
@@ -476,49 +476,28 @@ public class ImportService {
         long parseEnd = System.currentTimeMillis();
         metrics.addParseTime(parseEnd - docStart);
 
-        // 2. 在 document 表中匹配（按文件名）
-        Optional<Document> matchOpt = docRepo.findByStatus("expected").stream()
-                .filter(d -> fileName.contains(extractBaseName(d.getFileName())) ||
-                             d.getFileName().contains(extractBaseName(fileName)))
-                .findFirst();
-
+        // 同一部门/公共范围内匹配，拒绝歧义，禁止跨范围覆盖。
+        Optional<Document> matched = DocumentImportMatcher.match(
+                docRepo.findByDeptNameAndIsPublic(deptName, isPublic), fileName, deptName, isPublic);
         Document doc;
-        if (matchOpt.isPresent()) {
-            doc = matchOpt.get();
-            doc.setStatus("matched");
-            // 更新 Neo4j 文档节点状态
-            graphBuildService.createDocument(doc.getFileId(), fileName, "matched");
-        } else {
-            // 未匹配到 CSV 记录 → 尝试查找已存在的文档（同文件名覆盖）
-            Optional<Document> existingOpt = docRepo.findAll().stream()
-                    .filter(d -> extractBaseName(fileName).equals(extractBaseName(d.getFileName())))
-                    .findFirst();
-
-            if (existingOpt.isPresent()) {
-                doc = existingOpt.get();
-                log.info("覆盖已有文档: {} (fileId={})", fileName, doc.getFileId());
-                doc.setDeptName(deptName);
-                doc.setIsPublic(isPublic);
-                doc.setImportBatch(batchId);
-                // 删除旧的 ES 索引条目（稍后重新索引）
-                esService.deleteByDocId(doc.getFileId());
-            } else {
-                // 未匹配到任何记录，创建 orphan
-                String newFileId = UUID.randomUUID().toString().replace("-", "");
-                doc = Document.builder()
-                        .fileId(newFileId)
-                        .fileName(fileName)
-                        .status("orphan")
-                        .deptName(deptName)
-                        .isPublic(isPublic)
-                        .importBatch(batchId)
-                        .build();
-                graphBuildService.createDocument(newFileId, fileName, "orphan");
+        if (matched.isPresent()) {
+            doc = matched.get();
+            if (doc.getItem() != null) {
+                DocumentImportMatcher.requireSameScope(doc.getItem().getDeptName(),
+                        doc.getItem().getIsPublic(), deptName, isPublic);
             }
+            if ("expected".equals(doc.getStatus())) doc.setStatus("matched");
+            doc.setImportBatch(batchId);
+            esService.deleteByDocId(doc.getFileId());
+        } else {
+            doc = Document.builder().fileId(UUID.randomUUID().toString().replace("-", ""))
+                    .fileName(fileName).status("orphan").deptName(deptName)
+                    .isPublic(isPublic).importBatch(batchId).build();
         }
+        graphBuildService.createDocument(doc.getFileId(), fileName, doc.getStatus());
 
         // 3. 上传原始文件 → MinIO
-        String objectPath = deptName + "/" + fileName;
+        String objectPath = deptName + "/" + doc.getFileId() + "/" + fileName;
         try (InputStream is = Files.newInputStream(docPath)) {
             String path = minioService.uploadDocument(objectPath, is,
                     Files.size(docPath), detectMimeType(fileName));
