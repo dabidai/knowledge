@@ -35,6 +35,7 @@ public class BrowseController {
 
     /** MinIO 文件存储服务 */
     private final MinioService minioService;
+    private final com.knowledge.service.PermissionService permissionService;
     /** 事项元数据仓库 */
     private final ItemRepository itemRepo;
     /** 文档映射仓库 */
@@ -42,26 +43,14 @@ public class BrowseController {
 
     /**
      * 获取文档目录树，按「部门 → 事项分类 → 事项 → 文件」四级结构组织。
-     * 缓存 30 分钟，按用户部门隔离。
+     * 每次根据当前用户权限查询，避免命中过期授权缓存。
      *
      * @param user 当前认证用户（用于权限过滤）
      * @return 四级树形结构
      */
     @GetMapping("/tree")
-    @org.springframework.cache.annotation.Cacheable(value = "browseTree", key = "#user.department.name")
     public ApiResponse<List<TreeNode>> tree(@AuthenticationPrincipal User user) {
-        if (user.getDepartment() == null) {
-            return ApiResponse.error(400, "当前用户未关联部门，无法浏览文档目录");
-        }
-        String deptName = user.getDepartment().getName();
-        boolean isAdmin = "admin".equals(user.getRole());
-
-        List<Item> items;
-        if (isAdmin) {
-            items = itemRepo.findAll();
-        } else {
-            items = itemRepo.findAccessibleByDept(deptName);
-        }
+        List<Item> items = permissionService.accessibleItems(user);
 
         // 按部门 → 事项分类 → 事项 → 文档 四级分组
         Map<String, Map<String, List<TreeNode.ItemNode>>> deptMap = new LinkedHashMap<>();
@@ -74,7 +63,8 @@ public class BrowseController {
             Map<String, List<TreeNode.ItemNode>> catMap = deptMap.get(dept);
             catMap.computeIfAbsent(cat, k -> new ArrayList<>());
 
-            List<Document> docs = docRepo.findByItemItemId(item.getItemId());
+            List<Document> docs = permissionService.readableDocuments(user, docRepo.findByItemItemId(item.getItemId())
+                    .stream().map(Document::getFileId).toList());
             List<TreeNode.DocNode> docNodes = docs.stream()
                     .map(d -> TreeNode.DocNode.builder()
                             .fileId(d.getFileId())
@@ -135,9 +125,11 @@ public class BrowseController {
      * @return 包含 fileId 和 Markdown 内容的 Map
      */
     @GetMapping("/doc/{fileId}")
-    public ApiResponse<Map<String, String>> getDocument(@PathVariable String fileId) {
+    public ApiResponse<Map<String, String>> getDocument(@PathVariable String fileId,
+            @AuthenticationPrincipal User user) {
+        Document doc = permissionService.requireDocument(user, fileId);
         try {
-            String objectPath = "markdown/" + fileId + ".md";
+            String objectPath = doc.getMinioMdPath() != null ? doc.getMinioMdPath() : "markdown/" + fileId + ".md";
             String content = minioService.getMarkdown(objectPath);
             if (content == null) {
                 return ApiResponse.error(404, "文档内容不存在: " + fileId);
@@ -157,9 +149,9 @@ public class BrowseController {
      */
     @GetMapping("/download/{fileId}")
     public void downloadDocument(@PathVariable String fileId,
-                                  HttpServletResponse response) throws IOException {
+                                  @AuthenticationPrincipal User user, HttpServletResponse response) throws IOException {
         // 1. 查找文档记录获取元信息
-        Document doc = docRepo.findById(fileId).orElse(null);
+        Document doc = permissionService.requireDocument(user, fileId);
         String objectPath;
         String downloadFileName;
 
