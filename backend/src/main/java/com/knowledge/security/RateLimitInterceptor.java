@@ -2,66 +2,71 @@ package com.knowledge.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
-
+import java.time.Clock;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 请求限流拦截器 —— 基于内存计数器的简单限流。
- * 检测 @RateLimit 注解，为每个 IP+方法 维护独立的计数器。
- */
-@Slf4j
+/** 单实例有界限流；仅信任显式配置的代理，不采信任意转发头。 */
 @Component
 public class RateLimitInterceptor implements HandlerInterceptor {
+    private record Counter(long expiresAt, int count) {}
+    private final Map<String, Counter> counters = new HashMap<>();
+    private final Clock clock;
+    private long nextCleanup;
+    private static final int MAX_COUNTERS = 10_000;
 
-    /** 计数器映射：key = "IP:方法签名:窗口起始秒" */
-    private final Map<String, Integer> counterMap = new ConcurrentHashMap<>();
+    @Value("${security.rate-limit.trusted-proxies:}")
+    private List<String> trustedProxies = List.of();
+
+    public RateLimitInterceptor() { this(Clock.systemUTC()); }
+    RateLimitInterceptor(Clock clock) { this.clock = clock; }
 
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
-                             Object handler) throws Exception {
-        if (!(handler instanceof HandlerMethod hm)) {
-            return true;
-        }
-
-        RateLimit annotation = hm.getMethodAnnotation(RateLimit.class);
-        if (annotation == null) {
-            return true;
-        }
-
-        String clientIp = getClientIp(request);
-        int window = annotation.windowSeconds();
-        String methodKey = hm.getMethod().getName();
-        long windowStart = System.currentTimeMillis() / 1000 / window;
-        String counterKey = clientIp + ":" + methodKey + ":" + windowStart;
-
-        int count = counterMap.merge(counterKey, 1, Integer::sum);
-
-        if (count > annotation.maxRequests()) {
-            log.warn("限流触发: IP={}, 方法={}, 窗口内请求={}", clientIp, methodKey, count);
-            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-            response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write(
-                    "{\"code\":429,\"message\":\"请求过于频繁，请稍后再试\",\"data\":null}");
-            return false;
-        }
-
-        return true;
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if (!(handler instanceof HandlerMethod method)) return true;
+        RateLimit rule = method.getMethodAnnotation(RateLimit.class);
+        if (rule == null) return true;
+        long now = clock.millis();
+        long windowMs = rule.windowSeconds() * 1000L;
+        String key = clientIp(request) + ":" + method.getMethod().toGenericString() + ":" + now / windowMs;
+        if (allow(key, now, windowMs, rule.maxRequests())) return true;
+        response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+        response.setHeader("Retry-After", Long.toString(Math.max(1, (windowMs - now % windowMs + 999) / 1000)));
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write("{\"code\":429,\"message\":\"请求过于频繁，请稍后再试\",\"data\":null}");
+        return false;
     }
 
-    /** 获取客户端真实 IP */
-    private String getClientIp(HttpServletRequest request) {
-        String xf = request.getHeader("X-Forwarded-For");
-        if (xf != null && !xf.isBlank()) {
-            return xf.split(",")[0].trim();
+    private synchronized boolean allow(String key, long now, long windowMs, int limit) {
+        if (now >= nextCleanup || counters.size() >= MAX_COUNTERS) {
+            counters.values().removeIf(c -> c.expiresAt <= now);
+            nextCleanup = now + 1000;
         }
-        String xr = request.getHeader("X-Real-IP");
-        if (xr != null && !xr.isBlank()) return xr.trim();
-        return request.getRemoteAddr();
+        Counter counter = counters.get(key);
+        if (counter == null && counters.size() >= MAX_COUNTERS) return false;
+        int count = counter == null ? 1 : Math.min(counter.count + 1, limit + 1);
+        counters.put(key, new Counter((now / windowMs + 1) * windowMs, count));
+        return count <= limit;
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        String address = request.getRemoteAddr();
+        if (!trustedProxies.contains(address)) return address;
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded == null || forwarded.isBlank()) return address;
+        String[] chain = forwarded.split(",");
+        // 从可信代理最近的一跳向左检查，不使用客户端自行添加的最左地址。
+        for (int i = chain.length - 1; i >= 0 && trustedProxies.contains(address); i--) {
+            String candidate = chain[i].trim();
+            if (candidate.isBlank() || candidate.length() > 45 || !candidate.matches("[0-9a-fA-F:.]+")) break;
+            address = candidate;
+        }
+        return address;
     }
 }
