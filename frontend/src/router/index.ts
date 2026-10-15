@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { ElMessage } from 'element-plus'
+import { safeReturnPath } from '@/auth/navigation'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -64,16 +66,30 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to) => {
   const authStore = useAuthStore()
-
-  if (to.meta.requiresAuth && !authStore.isLoggedIn) {
-    next('/login')
-  } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
-    next('/search')
-  } else {
-    next()
+  if (to.meta.requiresAuth || (to.path === '/login' && authStore.status !== 'unavailable')) {
+    try {
+      await authStore.restore()
+    } catch {
+      if (to.path === '/login') return true // 允许用户重新登录，避免断网时路由卡死。
+      ElMessage.error('暂时无法确认登录状态，请检查连接后重试')
+      return { path: '/login', query: { redirect: safeReturnPath(to.fullPath) } }
+    }
   }
+  if (to.meta.requiresAuth && !authStore.isLoggedIn) {
+    return { path: '/login', query: { redirect: safeReturnPath(to.fullPath) } }
+  } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    ElMessage.warning('当前账号没有访问该页面的权限')
+    return '/search'
+  }
+  if (to.path === '/login' && authStore.isLoggedIn) return safeReturnPath(to.query.redirect)
+  return true
+})
+
+window.addEventListener('auth-expired', () => {
+  const route = router.currentRoute.value
+  if (route.path !== '/login') void router.replace({ path: '/login', query: { redirect: safeReturnPath(route.fullPath) } })
 })
 
 export default router

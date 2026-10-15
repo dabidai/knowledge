@@ -52,7 +52,7 @@
           <el-input v-model="form.username" />
         </el-form-item>
         <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" />
+          <el-input v-model="form.password" type="password" show-password placeholder="至少 8 个字符" />
         </el-form-item>
         <el-form-item label="部门">
           <el-select v-model="form.dept" style="width:100%">
@@ -125,9 +125,14 @@ async function loadUsers() {
 }
 
 async function handleCreate() {
+  if (!form.username || !form.password || !form.dept) {
+    ElMessage.warning('请填写用户名、密码并选择部门')
+    return
+  }
   try {
     await userApi.create({ ...form })
     showCreate.value = false
+    Object.assign(form, { username: '', password: '', dept: depts.value[0] || '', role: 'default' })
     ElMessage.success('用户创建成功')
     loadUsers()
   } catch {}
