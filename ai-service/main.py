@@ -2,30 +2,24 @@
 知识库 AI 服务 —— FastAPI
 提供 Embedding 生成 + RAG 问答（通过 Ollama 调用本地 LLM）
 """
-import os
 import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+import settings as cfg
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============ 配置 ============
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b-q4_K_M")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
-EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "pytorch")  # "pytorch" | "onnx"
-
 # ============ 全局模型实例 ============
-embedder: Optional[SentenceTransformer] = None
-llm: Optional[ChatOllama] = None
+embedder = None
+llm = None
 
 # ============ RAG Prompt 模板 ============
 RAG_SYSTEM = """你是一个政府公文知识库智能助手。请根据提供的文档片段和结构化数据回答用户的问题。
@@ -104,35 +98,35 @@ def build_chat_messages(contexts: List[str], history: Optional[List[dict]], ques
     return messages
 
 
+def load_embedder():
+    # 测试与模块导入不加载 torch/模型。
+    from sentence_transformers import SentenceTransformer
+    kwargs = {}
+    if cfg.EMBEDDING_BACKEND == "onnx":
+        kwargs = {"backend": "onnx", "model_kwargs": {"provider": "CPUExecutionProvider"}}
+    # 不静默回退：依赖或模型不匹配时明确启动失败。
+    return SentenceTransformer(cfg.EMBEDDING_MODEL, **kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时加载模型，关闭时释放资源"""
     global embedder, llm
 
-    # Embedding 模型 —— 支持 ONNX 后端加速
-    logger.info(f"加载 Embedding 模型: {EMBEDDING_MODEL}, 后端: {EMBEDDING_BACKEND}")
-    if EMBEDDING_BACKEND == "onnx":
-        try:
-            embedder = SentenceTransformer(
-                EMBEDDING_MODEL,
-                backend="onnx",
-                model_kwargs={"provider": "CPUExecutionProvider"}
-            )
-            logger.info("Embedding 模型加载完成 (ONNX 后端)")
-        except Exception as e:
-            logger.warning(f"ONNX 后端加载失败，回退至 PyTorch: {e}")
-            embedder = SentenceTransformer(EMBEDDING_MODEL)
-            logger.info("Embedding 模型加载完成 (PyTorch 回退)")
-    else:
-        embedder = SentenceTransformer(EMBEDDING_MODEL)
-        logger.info("Embedding 模型加载完成 (PyTorch 后端)")
+    embedder = load_embedder()
+    if embedder.get_sentence_embedding_dimension() != cfg.EMBEDDING_DIMENSIONS:
+        raise ValueError("Embedding 模型维度与配置不一致")
+    logger.info("Embedding 已加载 model=%s backend=%s dimensions=%s",
+                cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BACKEND, cfg.EMBEDDING_DIMENSIONS)
 
-    logger.info(f"连接 Ollama: {OLLAMA_HOST}, 模型: {OLLAMA_MODEL}")
+    logger.info("连接 Ollama: %s, 模型: %s", cfg.OLLAMA_HOST, cfg.OLLAMA_MODEL)
     llm = ChatOllama(
-        base_url=OLLAMA_HOST,
-        model=OLLAMA_MODEL,
+        base_url=cfg.OLLAMA_HOST,
+        model=cfg.OLLAMA_MODEL,
         temperature=0.1,
-        num_ctx=4096,
+        num_ctx=cfg.OLLAMA_NUM_CTX,
+        num_predict=cfg.OLLAMA_NUM_PREDICT,
+        client_kwargs={"timeout": cfg.GENERATION_TIMEOUT_SECONDS},
     )
     logger.info("Ollama 连接成功")
 
@@ -262,4 +256,4 @@ async def chat(req: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000)

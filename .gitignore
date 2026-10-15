@@ -39,3 +39,4 @@ onnx-model/
 *.jpg
 tmp/
 !docs/permission-isolation-design.md
+!ai-service/requirements-*.txt
