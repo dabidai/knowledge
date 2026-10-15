@@ -33,7 +33,9 @@ ai-service/ai-models/
 *.ps1
 *.tar.gz
 *.md
+!docs/system-coordination/*.md
 
 onnx-model/
 *.jpg
 tmp/
+!docs/permission-isolation-design.md
