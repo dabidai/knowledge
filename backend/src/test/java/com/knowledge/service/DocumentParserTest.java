@@ -32,10 +32,19 @@ class DocumentParserTest {
     @Test
     @DisplayName("不支持的格式应抛出异常")
     void parseUnsupportedFormat(@TempDir Path tmpDir) throws IOException {
-        Path file = tmpDir.resolve("test.txt");
+        Path file = tmpDir.resolve("test.unsupported");
         Files.writeString(file, "hello");
 
-        assertThrows(IllegalArgumentException.class, () -> parser.parse(file));
+        IOException error = assertThrows(IOException.class, () -> parser.parse(file));
+        assertInstanceOf(IllegalArgumentException.class, error.getCause());
+    }
+
+    @Test
+    @DisplayName("TXT 是受支持的格式")
+    void parseText(@TempDir Path tmpDir) throws IOException {
+        Path file = tmpDir.resolve("test.txt");
+        Files.writeString(file, "hello");
+        assertEquals("hello", parser.parse(file));
     }
 
     @Test
