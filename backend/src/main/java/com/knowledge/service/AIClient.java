@@ -9,156 +9,139 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
-/** AI 服务 HTTP 客户端 —— 调用 Python FastAPI */
+/** Python AI 客户端。失败抛出明确异常，由调用方决定是否允许降级。 */
 @Slf4j
 @Service
 public class AIClient {
-
+    private static final int VECTOR_DIMENSIONS = 1024; // 与 ES contentVector 映射一致
     private final RestClient restClient;
+    private final RestClient batchClient;
+    private final RestClient generationClient;
+    private final RestClient healthClient;
     private final ObjectMapper objectMapper;
 
     @Value("${ai-service.url}")
     private String aiServiceUrl;
 
     public AIClient(ObjectMapper objectMapper) {
-        var factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(10));
-        factory.setReadTimeout(Duration.ofMinutes(5));
-        this.restClient = RestClient.builder().requestFactory(factory).build();
         this.objectMapper = objectMapper;
+        restClient = client(Duration.ofSeconds(30));
+        batchClient = client(Duration.ofSeconds(180));
+        generationClient = client(Duration.ofSeconds(190));
+        healthClient = client(Duration.ofSeconds(5));
     }
 
-    /** 生成 Embedding */
-    public float[] embed(String text) {
-        long start = System.currentTimeMillis();
+    private static RestClient client(Duration timeout) {
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(3));
+        factory.setReadTimeout(timeout);
+        return RestClient.builder().requestFactory(factory).build();
+    }
+
+    private <T> T post(RestClient client, String path, Object request, Class<T> responseType) {
         try {
-            EmbedRequest req = new EmbedRequest(text);
-            String json = objectMapper.writeValueAsString(req);
-            log.debug("Embed 请求: {}", json);
-            EmbedResponse resp = restClient.post()
-                    .uri(aiServiceUrl + "/embed")
+            T response = client.post().uri(aiServiceUrl + path)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(json)
-                    .retrieve()
-                    .body(EmbedResponse.class);
-            long elapsed = System.currentTimeMillis() - start;
-            log.info("【性能埋点】Embed 调用成功, 耗时={}ms, 文本长度={}", elapsed, text.length());
-            return resp != null ? resp.embedding : new float[0];
+                    .body(objectMapper.writeValueAsString(request)).retrieve().body(responseType);
+            if (response == null) throw new AIServiceException(502, "AI 服务返回空响应");
+            return response;
+        } catch (AIServiceException e) {
+            throw e;
         } catch (Exception e) {
-            long elapsed = System.currentTimeMillis() - start;
-            log.error("【性能埋点】Embed 调用失败, 耗时={}ms, 文本长度={}", elapsed, text.length());
-            log.error("Embedding 生成失败", e);
-            return new float[0];
+            int status = 503;
+            String message = "AI 服务暂时不可用，请稍后重试";
+            if (e instanceof RestClientResponseException response) {
+                int upstream = response.getStatusCode().value();
+                if (upstream == 413 || upstream == 422) {
+                    status = 422;
+                    message = "请求内容超过 AI 服务限制，请缩短问题或上下文";
+                } else if (upstream == 504) {
+                    status = 504;
+                    message = "模型响应超时，请稍后重试";
+                }
+            }
+            log.warn("AI 调用失败 path={} type={}", path, e.getClass().getSimpleName());
+            throw new AIServiceException(status, message, e);
         }
     }
 
-    /** 批量生成 Embedding —— 一次 HTTP 请求处理多条，减少网络往返 */
+    public float[] embed(String text) {
+        EmbedResponse response = post(restClient, "/embed", new EmbedRequest(text), EmbedResponse.class);
+        validateVector(response.embedding);
+        return response.embedding;
+    }
+
     public List<float[]> embedBatch(List<String> texts) {
         if (texts == null || texts.isEmpty()) return List.of();
-        long start = System.currentTimeMillis();
-        try {
-            EmbedBatchRequest req = new EmbedBatchRequest(texts);
-            String json = objectMapper.writeValueAsString(req);
-            EmbedBatchResponse resp = restClient.post()
-                    .uri(aiServiceUrl + "/embed-batch")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(json)
-                    .retrieve()
-                    .body(EmbedBatchResponse.class);
-            long elapsed = System.currentTimeMillis() - start;
-            log.info("【性能埋点】EmbedBatch 调用成功, 条数={}, 耗时={}ms, 平均={}ms/条",
-                    texts.size(), elapsed,
-                    texts.size() > 0 ? String.format("%.1f", (double) elapsed / texts.size()) : "N/A");
-            return resp != null ? resp.embeddings : List.of();
-        } catch (Exception e) {
-            long elapsed = System.currentTimeMillis() - start;
-            String httpStatus = "N/A";
-            String responseBody = "N/A";
-            if (e instanceof org.springframework.web.client.HttpStatusCodeException) {
-                var hse = (org.springframework.web.client.HttpStatusCodeException) e;
-                httpStatus = String.valueOf(hse.getStatusCode().value());
-                responseBody = hse.getResponseBodyAsString();
-            }
-            log.error("【性能埋点】EmbedBatch 调用失败, 条数={}, 耗时={}ms, HTTP状态={}, 响应体={}",
-                    texts.size(), elapsed, httpStatus, responseBody, e);
-            return List.of();
+        EmbedBatchResponse response = post(batchClient, "/embed-batch",
+                new EmbedBatchRequest(texts), EmbedBatchResponse.class);
+        if (response.embeddings == null || response.embeddings.size() != texts.size()) {
+            throw new AIServiceException(502, "AI 服务返回的向量数量不匹配");
+        }
+        response.embeddings.forEach(AIClient::validateVector);
+        return response.embeddings;
+    }
+
+    private static void validateVector(float[] vector) {
+        if (vector == null || vector.length != VECTOR_DIMENSIONS) {
+            throw new AIServiceException(502, "AI 服务返回的向量维度不匹配");
+        }
+        for (float value : vector) {
+            if (!Float.isFinite(value)) throw new AIServiceException(502, "AI 服务返回无效向量数值");
         }
     }
+
+    private static String answer(AskResponse response) {
+        if (response.answer == null || response.answer.isBlank()) {
+            throw new AIServiceException(502, "AI 服务返回空答案");
+        }
+        if (response.inputTruncated) log.info("AI 输入已按模型预算裁剪");
+        return response.answer;
+    }
+
     public String ask(String question, List<String> contexts) {
-        try {
-            AskRequest req = new AskRequest(question, contexts);
-            String json = objectMapper.writeValueAsString(req);
-            AskResponse resp = restClient.post()
-                    .uri(aiServiceUrl + "/ask")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(json)
-                    .retrieve()
-                    .body(AskResponse.class);
-            return resp != null ? resp.answer : "抱歉，AI 服务暂时不可用。";
-        } catch (Exception e) {
-            log.error("RAG 问答失败", e);
-            return "抱歉，AI 服务暂时不可用。";
-        }
+        return answer(post(generationClient, "/ask", new AskRequest(question, contexts), AskResponse.class));
     }
 
-    /** 智能体对话 */
-    public String chat(String question, List<String> contexts,
-                       List<Map<String, String>> history) {
-        try {
-            ChatRequest req = new ChatRequest(question, contexts, history);
-            String json = objectMapper.writeValueAsString(req);
-            log.debug("Chat 请求: {}", json);
-            AskResponse resp = restClient.post()
-                    .uri(aiServiceUrl + "/chat")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(json)
-                    .retrieve()
-                    .body(AskResponse.class);
-            return resp != null ? resp.answer : "抱歉，AI 服务暂时不可用。";
-        } catch (Exception e) {
-            log.error("智能体对话失败", e);
-            return "抱歉，AI 服务暂时不可用。";
-        }
+    public String chat(String question, List<String> contexts, List<Map<String, String>> history) {
+        return answer(post(generationClient, "/chat", new ChatRequest(question, contexts, history), AskResponse.class));
     }
 
-    /** 健康检查 */
+    /** readiness 确认模型已加载、Ollama 可达且所需模型存在；不触发推理。 */
     public boolean health() {
         try {
-            String resp = restClient.get()
-                    .uri(aiServiceUrl + "/health")
-                    .retrieve()
-                    .body(String.class);
-            return resp != null && resp.contains("UP");
+            String response = healthClient.get().uri(aiServiceUrl + "/health/ready")
+                    .retrieve().body(String.class);
+            return response != null && "UP".equals(objectMapper.readTree(response).path("status").asText());
         } catch (Exception e) {
             return false;
         }
     }
 
-    // -- 请求/响应模型 --
-
-    @Data
-    public static class EmbedRequest {
-        private String text;
-        public EmbedRequest() {}
-        public EmbedRequest(String text) { this.text = text; }
+    public static class AIServiceException extends RuntimeException {
+        private final int status;
+        public AIServiceException(int status, String message) { this(status, message, null); }
+        public AIServiceException(int status, String message, Throwable cause) {
+            super(message, cause);
+            this.status = status;
+        }
+        public int getStatus() { return status; }
     }
+
+    public record EmbedRequest(String text) {}
+    public record EmbedBatchRequest(List<String> texts) {}
+    public record AskRequest(String question, List<String> contexts) {}
+    public record ChatRequest(String question, List<String> contexts, List<Map<String, String>> history) {}
 
     @Data
     public static class EmbedResponse {
-        @JsonProperty("embedding")
         private float[] embedding;
-    }
-
-    @Data
-    public static class EmbedBatchRequest {
-        private List<String> texts;
-        public EmbedBatchRequest() {}
-        public EmbedBatchRequest(List<String> texts) { this.texts = texts; }
     }
 
     @Data
@@ -167,33 +150,9 @@ public class AIClient {
     }
 
     @Data
-    public static class AskRequest {
-        private String question;
-        private List<String> contexts;
-        public AskRequest() {}
-        public AskRequest(String question, List<String> contexts) {
-            this.question = question;
-            this.contexts = contexts;
-        }
-    }
-
-    @Data
     public static class AskResponse {
         private String answer;
-    }
-
-    @Data
-    public static class ChatRequest {
-        private String question;
-        private List<String> contexts;
-        @JsonProperty("history")
-        private List<Map<String, String>> history;
-        public ChatRequest() {}
-        public ChatRequest(String question, List<String> contexts,
-                           List<Map<String, String>> history) {
-            this.question = question;
-            this.contexts = contexts;
-            this.history = history;
-        }
+        @JsonProperty("input_truncated")
+        private boolean inputTruncated;
     }
 }

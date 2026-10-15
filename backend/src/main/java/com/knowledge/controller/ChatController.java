@@ -67,13 +67,20 @@ public class ChatController {
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
 
-        String question = (String) body.getOrDefault("question", "");
-        int topK = (int) body.getOrDefault("topK", 5);
+        if (!(body.get("question") instanceof String question)) {
+            return ApiResponse.error(400, "问题必须为文本");
+        }
+        if (!(body.getOrDefault("topK", 5) instanceof Integer topK)) {
+            return ApiResponse.error(400, "topK 必须为整数");
+        }
         Object convIdObj = body.get("conversationId");
         Long conversationId = convIdObj instanceof Number ? ((Number) convIdObj).longValue() : null;
 
         if (question == null || question.isBlank()) {
             return ApiResponse.error(400, "问题不能为空");
+        }
+        if (question.length() > 1000 || topK < 1 || topK > 10) {
+            return ApiResponse.error(400, "问题最多 1000 字，topK 必须在 1 到 10 之间");
         }
 
         try {
@@ -92,7 +99,15 @@ public class ChatController {
             conversationService.addMessage(conversationId, user.getId(), "user", question, null);
 
             // 3. 生成查询向量
-            float[] queryVector = aiClient.embed(question);
+            float[] queryVector = null;
+            boolean degraded = false;
+            try {
+                queryVector = aiClient.embed(question);
+                degraded = queryVector == null || queryVector.length == 0;
+            } catch (AIClient.AIServiceException e) {
+                degraded = true;
+                log.warn("聊天向量生成失败，降级为关键词检索");
+            }
 
             // 4. ES 混合检索
             AccessScope scope = AccessScope.of(user);
@@ -169,11 +184,15 @@ public class ChatController {
                     .answer(answer)
                     .sources(sources)
                     .conversationId(conversationId)
+                    .degraded(degraded)
+                    .warning(degraded ? "语义检索暂不可用，本次已使用关键词检索" : null)
                     .build();
 
             return ApiResponse.ok(result);
         } catch (AccessDeniedException e) {
             throw e;
+        } catch (AIClient.AIServiceException e) {
+            return ApiResponse.error(e.getStatus(), e.getMessage());
         } catch (Exception e) {
             log.error("对话失败", e);
             return ApiResponse.error(500, "对话服务异常: " + e.getMessage());
@@ -190,5 +209,7 @@ public class ChatController {
         private List<SearchResult.SourceDoc> sources;
         /** 对话 ID（前端用于后续追加消息） */
         private Long conversationId;
+        private boolean degraded;
+        private String warning;
     }
 }

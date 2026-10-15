@@ -20,6 +20,9 @@ public class SearchResult {
     private List<RelatedItem> relatedItems;
     /** 知识图谱数据 (Neo4j 返回) */
     private Object knowledgeGraph;
+    /** 向量服务故障时使用关键词检索，供前端明确提示。 */
+    private boolean degraded;
+    private String warning;
 
     @Data
     @Builder
