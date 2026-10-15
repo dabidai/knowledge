@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
 
@@ -9,38 +9,48 @@ const http = axios.create({
 
 // 请求拦截器：附加 JWT
 http.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
+  const token = useAuthStore().token
+  if (config.url === '/auth/login') return config
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
 })
 
+function handleError(err: any) {
+  const url = err.config?.url
+  if (url === '/auth/me') return Promise.reject(err) // restore 区分 401 与网络故障。
+  if (err.response?.status === 401 && url !== '/auth/login') {
+    const auth = useAuthStore()
+    // 迟到的旧请求不能清除用户刚建立的新登录。
+    if (auth.token && err.config?.headers?.Authorization === `Bearer ${auth.token}`) {
+      auth.logout()
+      ElMessage.warning('登录已失效，请重新登录')
+      window.dispatchEvent(new Event('auth-expired'))
+    }
+  } else {
+    ElMessage.error(err.response?.data?.message || (err.response ? '请求失败' : '网络连接失败，请稍后重试'))
+  }
+  return Promise.reject(err)
+}
+
 // 响应拦截器：统一错误处理
 http.interceptors.response.use(
   res => {
     // 后端业务错误（HTTP 200 但业务 code 非 200）
     if (res.data && typeof res.data.code === 'number' && res.data.code >= 400) {
-      ElMessage.error(res.data.message || '请求失败')
-      return Promise.reject(new Error(res.data.message || '请求失败'))
+      return handleError(new AxiosError(res.data.message, undefined, res.config, res.request,
+        { ...res, status: res.data.code }))
     }
     return res
   },
-  err => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
-    } else {
-      ElMessage.error(err.response?.data?.message || '请求失败')
-    }
-    return Promise.reject(err)
-  }
+  handleError
 )
 
 // ============ API 方法 ============
 
 export const authApi = {
+  me: () => http.get('/auth/me', { timeout: 10000 }),
   login: (data: { username: string; password: string }) =>
     http.post('/auth/login', data),
 }
