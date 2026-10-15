@@ -22,6 +22,15 @@ public class ConversationService {
     private final ConversationMessageRepository msgRepo;
     private final ObjectMapper objectMapper;
 
+    public Conversation requireOwner(Long id, Long userId) {
+        Conversation conv = convRepo.findById(id).orElseThrow(() ->
+                new org.springframework.security.access.AccessDeniedException("会话不可访问"));
+        if (userId == null || !userId.equals(conv.getUserId())) {
+            throw new org.springframework.security.access.AccessDeniedException("会话不可访问");
+        }
+        return conv;
+    }
+
     /** 列出用户的所有对话 */
     public List<Conversation> listConversations(Long userId) {
         return convRepo.findByUserIdOrderByUpdatedAtDesc(userId);
@@ -29,11 +38,7 @@ public class ConversationService {
 
     /** 获取对话的全部消息 */
     public List<ConversationMessage> getMessages(Long conversationId, Long userId) {
-        Conversation conv = convRepo.findById(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("对话不存在"));
-        if (!conv.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("无权访问该对话");
-        }
+        requireOwner(conversationId, userId);
         return msgRepo.findByConversationIdOrderByCreatedAtAsc(conversationId);
     }
 
@@ -51,8 +56,9 @@ public class ConversationService {
 
     /** 添加一条消息到对话 */
     @Transactional
-    public ConversationMessage addMessage(Long conversationId, String role,
+    public ConversationMessage addMessage(Long conversationId, Long userId, String role,
                                           String content, List<?> sources) {
+        requireOwner(conversationId, userId);
         String sourcesJson = null;
         if (sources != null && !sources.isEmpty()) {
             try {
@@ -82,11 +88,7 @@ public class ConversationService {
     /** 重命名对话 */
     @Transactional
     public void renameConversation(Long conversationId, Long userId, String newTitle) {
-        Conversation conv = convRepo.findById(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("对话不存在"));
-        if (!conv.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("无权修改该对话");
-        }
+        Conversation conv = requireOwner(conversationId, userId);
         if (newTitle == null || newTitle.isBlank()) {
             throw new IllegalArgumentException("标题不能为空");
         }
@@ -99,11 +101,7 @@ public class ConversationService {
     /** 删除对话及其所有消息 */
     @Transactional
     public void deleteConversation(Long conversationId, Long userId) {
-        Conversation conv = convRepo.findById(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("对话不存在"));
-        if (!conv.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("无权删除该对话");
-        }
+        Conversation conv = requireOwner(conversationId, userId);
         msgRepo.deleteByConversationId(conversationId);
         convRepo.delete(conv);
     }
