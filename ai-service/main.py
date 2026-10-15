@@ -1,18 +1,18 @@
-"""
-知识库 AI 服务 —— FastAPI
-提供 Embedding 生成 + RAG 问答（通过 Ollama 调用本地 LLM）
-"""
+"""知识库 AI 服务：受限并发的向量编码与 Ollama 问答。"""
+import asyncio
 import logging
 import math
 from contextlib import asynccontextmanager
 from typing import Annotated, List, Literal, Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field, StringConstraints, model_validator
+from starlette.concurrency import run_in_threadpool
 
 import settings as cfg
 
@@ -139,6 +139,30 @@ def build_chat_messages(contexts, history, question, system=CHAT_SYSTEM):
             HumanMessage(content=user_text + context_text)], truncated
 
 
+async def run_limited(app, gate, operation):
+    """忙时拒绝。独立任务持有名额，客户端取消不提前释放 CPU 名额。"""
+    if gate.locked():
+        raise HTTPException(503, "推理资源繁忙，请稍后重试", headers={"Retry-After": "2"})
+    await gate.acquire()
+
+    async def execute():
+        try:
+            return await operation()
+        finally:
+            gate.release()
+
+    task = asyncio.create_task(execute())
+    app.state.inflight.add(task)
+
+    def done(completed):
+        app.state.inflight.discard(completed)
+        if not completed.cancelled():
+            completed.exception()
+
+    task.add_done_callback(done)
+    return await asyncio.shield(task)
+
+
 def load_embedder():
     # 测试与模块导入不加载 torch/模型。
     from sentence_transformers import SentenceTransformer
@@ -153,27 +177,31 @@ def load_embedder():
 async def lifespan(app: FastAPI):
     """启动时加载模型，关闭时释放资源"""
     global embedder, llm
+    app.state.embedding_gate = asyncio.Semaphore(cfg.EMBEDDING_CONCURRENCY)
+    app.state.generation_gate = asyncio.Semaphore(cfg.GENERATION_CONCURRENCY)
+    app.state.inflight = set()
+    try:
+        embedder = await run_in_threadpool(load_embedder)
+        if embedder.get_sentence_embedding_dimension() != cfg.EMBEDDING_DIMENSIONS:
+            raise ValueError("Embedding 模型维度与配置不一致")
+        logger.info("Embedding 已加载 model=%s backend=%s dimensions=%s",
+                    cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BACKEND, cfg.EMBEDDING_DIMENSIONS)
 
-    embedder = load_embedder()
-    if embedder.get_sentence_embedding_dimension() != cfg.EMBEDDING_DIMENSIONS:
-        raise ValueError("Embedding 模型维度与配置不一致")
-    logger.info("Embedding 已加载 model=%s backend=%s dimensions=%s",
-                cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BACKEND, cfg.EMBEDDING_DIMENSIONS)
+        logger.info("连接 Ollama: %s, 模型: %s", cfg.OLLAMA_HOST, cfg.OLLAMA_MODEL)
+        llm = ChatOllama(
+            base_url=cfg.OLLAMA_HOST,
+            model=cfg.OLLAMA_MODEL,
+            temperature=0.1,
+            num_ctx=cfg.OLLAMA_NUM_CTX,
+            num_predict=cfg.OLLAMA_NUM_PREDICT,
+            client_kwargs={"timeout": cfg.GENERATION_TIMEOUT_SECONDS},
+        )
+        logger.info("Ollama 连接成功")
 
-    logger.info("连接 Ollama: %s, 模型: %s", cfg.OLLAMA_HOST, cfg.OLLAMA_MODEL)
-    llm = ChatOllama(
-        base_url=cfg.OLLAMA_HOST,
-        model=cfg.OLLAMA_MODEL,
-        temperature=0.1,
-        num_ctx=cfg.OLLAMA_NUM_CTX,
-        num_predict=cfg.OLLAMA_NUM_PREDICT,
-        client_kwargs={"timeout": cfg.GENERATION_TIMEOUT_SECONDS},
-    )
-    logger.info("Ollama 连接成功")
-
-    yield
-
-    logger.info("AI 服务关闭")
+        yield
+    finally:
+        await asyncio.gather(*app.state.inflight, return_exceptions=True)
+        embedder, llm = None, None
 
 
 class BodyLimitMiddleware:
@@ -235,7 +263,8 @@ async def embed_batch(req: EmbedBatchRequest):
     if embedder is None:
         raise HTTPException(503, "Embedding 模型未加载")
     try:
-        vectors = encode_texts(req.texts)
+        vectors = await run_limited(app, app.state.embedding_gate,
+                                    lambda: run_in_threadpool(encode_texts, req.texts))
         return EmbedBatchResponse(embeddings=vectors)
     except HTTPException:
         raise
@@ -254,17 +283,26 @@ async def generate(req: ChatRequest, system: str):
     if llm is None:
         raise HTTPException(503, "LLM 客户端未初始化")
     messages, truncated = build_chat_messages(req.contexts, req.history, req.question, system)
-    try:
-        response = await llm.ainvoke(messages)
+
+    async def invoke():
+        response = await asyncio.wait_for(llm.ainvoke(messages), cfg.GENERATION_TIMEOUT_SECONDS)
         answer = StrOutputParser().invoke(response)
+        if not answer.strip():
+            raise ValueError("LLM 返回空答案")
+        return answer
+
+    try:
+        answer = await run_limited(app, app.state.generation_gate, invoke)
         logger.info("生成完成 contexts=%s input_truncated=%s answer_chars=%s",
                     len(req.contexts), truncated, len(answer))
         return AskResponse(answer=answer, input_truncated=truncated)
     except HTTPException:
         raise
+    except (TimeoutError, httpx.TimeoutException):
+        raise HTTPException(504, "模型响应超时，请稍后重试")
     except Exception:
         logger.exception("LLM 调用失败")
-        raise HTTPException(500, "模型调用失败")
+        raise HTTPException(502, "模型服务暂时不可用")
 
 
 @app.post("/ask", response_model=AskResponse)
