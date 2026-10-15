@@ -38,6 +38,7 @@
 
     <!-- 搜索结果 -->
     <div v-if="result" class="result-area">
+      <el-alert v-if="result.degraded" :title="result.warning" type="warning" :closable="false" show-icon />
       <!-- AI 答案 -->
       <el-card class="answer-card">
         <template #header><strong>🤖 AI 回答</strong></template>

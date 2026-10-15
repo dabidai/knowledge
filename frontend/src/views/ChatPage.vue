@@ -58,7 +58,9 @@
             <el-icon v-else :size="24" color="#409EFF"><ChatDotRound /></el-icon>
           </div>
           <div class="msg-content">
-            <div v-if="msg.role === 'assistant'" class="msg-text markdown-body"
+            <el-alert v-if="msg.warning" :title="msg.warning" type="warning" :closable="false" show-icon />
+            <el-alert v-if="msg.error" :title="msg.content" type="error" :closable="false" show-icon />
+            <div v-else-if="msg.role === 'assistant'" class="msg-text markdown-body"
                  v-html="renderMd(msg.content, msg.sources)"></div>
             <div v-else class="msg-text">{{ msg.content }}</div>
 
@@ -129,6 +131,8 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: any[]
+  warning?: string
+  error?: boolean
 }
 
 interface ConvItem {
@@ -249,7 +253,7 @@ async function handleSend() {
 
   try {
     const history = messages.value
-      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .filter(m => !m.error && (m.role === 'user' || m.role === 'assistant'))
       .slice(-20)
       .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
 
@@ -274,11 +278,13 @@ async function handleSend() {
       role: 'assistant',
       content: cleanAnswer || '抱歉，AI 服务暂时不可用。',
       sources: data.sources || [],
+      warning: data.warning,
     })
-  } catch {
+  } catch (err) {
     messages.value.push({
       role: 'assistant',
-      content: '抱歉，对话服务异常，请稍后重试。',
+      content: err instanceof Error ? err.message : '对话服务异常，请稍后重试。',
+      error: true,
     })
   } finally {
     thinking.value = false
