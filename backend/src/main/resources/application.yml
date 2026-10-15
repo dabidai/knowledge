@@ -54,8 +54,22 @@ spring:
 
 # ==================== JWT ====================
 jwt:
-  secret: ${JWT_SECRET:default-jwt-secret-change-in-production}
+  secret: ${JWT_SECRET:}
   expiration: 604800000  # 7 天 (毫秒)
+
+# 空库首次启动时必须显式提供；已有账号后跳过且不覆盖密码。
+bootstrap:
+  admin:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+    department: ${BOOTSTRAP_ADMIN_DEPARTMENT:信息技术部}
+
+security:
+  rate-limit:
+    # 默认忽略转发头；只有实际反向代理的来源 IP 可以列在这里。
+    trusted-proxies: ${TRUSTED_PROXY_IPS:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
 
 # ==================== Elasticsearch ====================
 elasticsearch:
