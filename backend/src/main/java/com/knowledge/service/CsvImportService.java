@@ -9,7 +9,6 @@ import com.opencsv.exceptions.CsvValidationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.mozilla.universalchardet.UniversalDetector;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,7 +34,7 @@ public class CsvImportService {
     private final ItemRepository itemRepo;
     private final DocumentRepository docRepo;
     private final OpinionRepository opinionRepo;
-    private final PasswordEncoder passwordEncoder;
+    private final UserAccountService accounts;
     /** Neo4j 图谱构建服务 —— 导入时同步创建图节点和关系 */
     private final GraphBuildService graphBuildService;
 
@@ -85,15 +84,14 @@ public class CsvImportService {
             String type = row[0].trim();
             String deptName = row[1].trim();
             String username = row[2].trim();
-            String password = row[3].trim();
+            String password = row[3];
             String role = row[4].trim();
 
             if ("dept".equals(type)) {
                 createDeptIfNotExist(deptName);
                 deptCount++;
             } else if ("user".equals(type)) {
-                createUserIfNotExist(deptName, username, password, role);
-                userCount++;
+                if (accounts.importUser(username, password, deptName, role.isEmpty() ? "default" : role)) userCount++;
             }
         }
 
@@ -108,30 +106,6 @@ public class CsvImportService {
         // Neo4j MERGE 幂等，每次都调用确保图节点存在，
         // 避免"MySQL 已有但 Neo4j 缺失"的脏状态
         graphBuildService.createDepartment(name);
-    }
-
-    private void createUserIfNotExist(String deptName, String username,
-                                       String password, String role) {
-        if (!userRepo.existsByUsername(username)) {
-            Department dept = deptRepo.findByName(deptName)
-                    .orElseGet(() -> {
-                        Department d = Department.builder().name(deptName).build();
-                        deptRepo.save(d);
-                        return d;
-                    });
-
-            userRepo.save(User.builder()
-                    .username(username)
-                    .password(passwordEncoder.encode(password))
-                    .role(role != null && !role.isEmpty() ? role : "default")
-                    .department(dept)
-                    .build());
-
-            log.info("创建用户: {} ({})", username, deptName);
-        }
-        // Neo4j 图节点每次导入都确保存在，不受 MySQL 已有记录影响
-        graphBuildService.createDepartment(deptName);
-        graphBuildService.createUser(username, role != null ? role : "default", deptName);
     }
 
     /**
